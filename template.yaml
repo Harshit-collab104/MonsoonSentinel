@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Monsoon Sentinel - Phase 2 AWS Persistence Infrastructure
+  Defines Amazon DynamoDB Table with StatusIndex GSI and Amazon S3 Private Evidence Bucket.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Deployment target environment tier.
+
+  DynamoDBTableName:
+    Type: String
+    Default: monsoon-sentinel-incidents
+    Description: DynamoDB table name for urban waterlogging incidents.
+
+  EvidenceBucketPrefix:
+    Type: String
+    Default: monsoon-sentinel-evidence
+    Description: Prefix for private S3 bucket storing photographic evidence and municipal flood datasets.
+
+Resources:
+  # ============================================================================
+  # 1. DynamoDB Table for Monsoon Sentinel Incidents
+  # ============================================================================
+  IncidentsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref DynamoDBTableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: incident_id
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: created_at
+          AttributeType: S
+      KeySchema:
+        - AttributeName: incident_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: StatusIndex
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: created_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: MonsoonSentinel
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================================================
+  # 2. Private S3 Bucket for Evidence & Municipal Datasets
+  # ============================================================================
+  EvidenceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${EvidenceBucketPrefix}-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: AbortIncompleteMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+          - Id: ExpireOldEvidenceVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+      Tags:
+        - Key: Project
+          Value: MonsoonSentinel
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  IncidentsTableName:
+    Description: Name of the DynamoDB Incidents Table
+    Value: !Ref IncidentsTable
+    Export:
+      Name: !Sub "${AWS::StackName}-IncidentsTableName"
+
+  IncidentsTableArn:
+    Description: ARN of the DynamoDB Incidents Table
+    Value: !GetAtt IncidentsTable.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-IncidentsTableArn"
+
+  EvidenceBucketName:
+    Description: Name of the S3 Evidence & Datasets Bucket
+    Value: !Ref EvidenceBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-EvidenceBucketName"
+
+  EvidenceBucketArn:
+    Description: ARN of the S3 Evidence Bucket
+    Value: !GetAtt EvidenceBucket.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-EvidenceBucketArn"
+
+  Region:
+    Description: Deployed AWS Region
+    Value: !Ref AWS::Region
