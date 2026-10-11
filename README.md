@@ -1,5 +1,5 @@
 # Monsoon Sentinel — AI-Assisted Urban Waterlogging Risk & Response System
-**Phase 2: AWS Persistence (Amazon DynamoDB & Amazon S3)**
+**Production AWS Serverless Persistence & Cloud Architecture**
 
 ---
 
@@ -7,25 +7,27 @@
 
 **Monsoon Sentinel** is an AI-assisted urban disaster response and flood risk mitigation system designed for municipal municipal corporations. During heavy monsoon events, rapid surface runoff, clogged storm culverts, and delayed dispatch lead to severe urban waterlogging, transit paralyzation, and property loss.
 
-### Phase 2 AWS Persistence Highlights
-- **Pluggable Persistence**: Switch between **SQLite/JSON** (local default) and **Amazon DynamoDB** via `STORAGE_BACKEND="sqlite" | "dynamodb"`.
+### AWS Persistence & Cloud Architecture
+- **Serverless API Runtime**: Containerized FastAPI application running on **AWS Lambda** via **Mangum** and **Amazon API Gateway** (Regional `/Prod` stage).
+- **Pluggable Persistence**: Switch between **SQLite/JSON** (local default) and **Amazon DynamoDB** (`ProjectTable`) via `STORAGE_BACKEND="sqlite" | "dynamodb"`.
 - **Atomic Concurrency & Idempotency**: DynamoDB conditional writes enforce valid state transitions (`#status = :expected_status`) and prevent duplicate response task dispatches directly at the database engine level.
-- **Private Amazon S3 Storage**: Photographic evidence and municipal flood datasets are stored privately in encrypted S3 buckets with Public Access Block enabled. Access is granted exclusively through short-lived presigned URLs.
-- **Infrastructure as Code**: AWS SAM template ([`template.yaml`](template.yaml)) defining the DynamoDB table with GSI and S3 private bucket.
+- **Private Amazon S3 Storage**: Photographic evidence and municipal flood datasets are stored privately in encrypted S3 bucket (`project-evidence-a7k29x`) with Public Access Block enabled. Access is granted exclusively through short-lived presigned URLs.
+- **Production Frontend**: React 19 SPA bundled with Vite 8 and hosted globally via **AWS Amplify Hosting**.
+- **Infrastructure as Code**: AWS SAM template ([`template.yaml`](template.yaml)) defining the Lambda function, API Gateway, DynamoDB IAM policies, and S3 lifecycle configurations.
 
 ---
 
 ## Technology Stack
 
-- **Backend**: Python 3.14+, FastAPI, Uvicorn, Pydantic v2, Boto3, Moto
+- **Backend**: Python 3.12/3.14+, FastAPI, Mangum, Uvicorn, Pydantic v2, Boto3, Moto
 - **Agent Orchestration**: **Strands Agents SDK** (`strands-agents 1.54.0`)
-- **Model Inference**: **Amazon SageMaker AI** (abstracted behind `SageMakerInferenceAdapter`, running in local mock mode without requiring AWS credentials or cloud billing)
+- **Model Inference**: **Amazon SageMaker AI** (abstracted behind `SageMakerInferenceAdapter`, running in local mock mode without cloud billing)
 - **Database & Storage**:
-  - **Amazon DynamoDB**: Table `monsoon-sentinel-incidents` with partition key `incident_id` and GSI `StatusIndex`.
-  - **Amazon S3**: Private bucket `monsoon-sentinel-evidence` with AES256 server-side encryption and Block Public Access.
+  - **Amazon DynamoDB**: Table `ProjectTable` with partition key `incident_id` and GSI `StatusIndex`.
+  - **Amazon S3**: Private bucket `project-evidence-a7k29x` with AES256 server-side encryption and Block Public Access.
   - **SQLite / JSON**: Local fallback repository implementing identical `IncidentRepositoryBase` contract.
-- **Frontend**: React 19, Vite, Tailwind CSS, Lucide Icons, SVG/GIS Hydrological Grid
-- **Testing**: Deterministic `pytest` unit test suite (30 passing tests) with `moto` local AWS emulation.
+- **Frontend**: React 19, Vite 8, Tailwind CSS v4, Leaflet GIS, Lucide Icons, Hosted on **AWS Amplify**
+- **Testing**: Deterministic `pytest` unit test suite with `moto` local AWS emulation.
 
 ---
 
@@ -60,131 +62,70 @@
 
 Configure application behavior using environment variables (never commit credentials or `.env` secrets):
 
+### Backend Environment Variables
 | Variable | Default | Description |
 |---|---|---|
-| `STORAGE_BACKEND` | `sqlite` | Persistence backend: `sqlite` for local development, `dynamodb` for AWS persistence |
-| `DYNAMODB_TABLE_NAME` | `monsoon-sentinel-incidents` | DynamoDB table name |
+| `STORAGE_BACKEND` | `dynamodb` | Persistence backend: `sqlite` for local development, `dynamodb` for AWS persistence |
+| `DYNAMODB_TABLE_NAME` | `ProjectTable` | DynamoDB table name |
 | `DYNAMODB_ENDPOINT_URL` | *(None)* | Optional custom endpoint URL (for DynamoDB Local emulator) |
-| `S3_BUCKET_NAME` | `monsoon-sentinel-evidence` | S3 private bucket name for evidence and datasets |
+| `S3_BUCKET_NAME` / `EVIDENCE_BUCKET` | `project-evidence-a7k29x` | S3 private bucket name for evidence and datasets |
 | `S3_ENDPOINT_URL` | *(None)* | Optional custom endpoint URL (for MinIO or S3 local emulator) |
-| `AWS_REGION` | `ap-south-1` | Target AWS region (e.g. `ap-south-1`, `us-east-1`) |
-| `USE_MOCK_SAGEMAKER` | `true` | Mock adapter toggle (`true` avoids cloud billing during development) |
+| `AWS_REGION` | `ap-south-1` | Target AWS region (e.g. `ap-south-1`) |
+| `USE_MOCK_SAGEMAKER` | `true` | Mock adapter toggle (`true` avoids cloud billing during development & demo) |
 | `SAGEMAKER_ENDPOINT_NAME` | `mock-monsoon-sagemaker-endpoint` | SageMaker AI endpoint name |
+| `ROOT_PATH` | `/Prod` | Stage prefix for API Gateway deployment |
+
+### Frontend Environment Variables
+| Variable | Default | Description |
+|---|---|---|
+| `VITE_API_BASE_URL` | `""` | Deployed API Gateway URL (e.g. `https://<api-id>.execute-api.ap-south-1.amazonaws.com/Prod`). When empty, Vite dev server proxies to `http://localhost:8000`. |
 
 ---
 
-## Required IAM Permissions
+## Deploying Frontend to AWS Amplify Hosting
 
-For security, the application adheres to the principle of least privilege. Do not use `AdministratorAccess`.
+The frontend repository includes preconfigured AWS Amplify build pipelines ([`amplify.yml`](amplify.yml) and [`frontend/amplify.yml`](frontend/amplify.yml)):
 
-### 1. Application Execution Role Policy
-Attach this policy to the Lambda execution role or ECS task role running Monsoon Sentinel:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "DynamoDBIncidentsAccess",
-      "Effect": "Allow",
-      "Action": [
-        "dynamodb:GetItem",
-        "dynamodb:PutItem",
-        "dynamodb:UpdateItem",
-        "dynamodb:DeleteItem",
-        "dynamodb:Query",
-        "dynamodb:Scan"
-      ],
-      "Resource": [
-        "arn:aws:dynamodb:*:*:table/monsoon-sentinel-incidents",
-        "arn:aws:dynamodb:*:*:table/monsoon-sentinel-incidents/index/*"
-      ]
-    },
-    {
-      "Sid": "S3EvidencePrivateAccess",
-      "Effect": "Allow",
-      "Action": [
-        "s3:PutObject",
-        "s3:GetObject",
-        "s3:HeadBucket",
-        "s3:ListBucket"
-      ],
-      "Resource": [
-        "arn:aws:s3:::monsoon-sentinel-evidence*",
-        "arn:aws:s3:::monsoon-sentinel-evidence*/*"
-      ]
-    }
-  ]
-}
-```
-
-### 2. Developer / Deployment Identity Policy (SAM / CloudFormation)
-The developer identity executing SAM deployments requires permissions to manage CloudFormation stacks, DynamoDB tables, and S3 buckets:
-- `cloudformation:*` on stack `monsoon-sentinel-*`
-- `dynamodb:CreateTable`, `dynamodb:DescribeTable`, `dynamodb:UpdateTable`, `dynamodb:DeleteTable`, `dynamodb:TagResource`
-- `s3:CreateBucket`, `s3:PutBucketPublicAccessBlock`, `s3:PutBucketEncryption`, `s3:PutBucketVersioning`, `s3:PutLifecycleConfiguration`, `s3:DeleteBucket`
+1. Open the **[AWS Amplify Console](https://ap-south-1.console.aws.amazon.com/amplify/home?region=ap-south-1)**.
+2. Click **Create new app** > **Host web app**.
+3. Connect your GitHub repository (`Harshit-collab104/MonsoonSentinel`) and select branch `main`.
+4. Leave monorepo **unchecked** (Amplify will automatically use the root `amplify.yml`).
+5. Under **Environment variables**, set:
+   - `VITE_API_BASE_URL`: `https://<your-api-id>.execute-api.ap-south-1.amazonaws.com/Prod`
+6. Click **Save and deploy**.
+7. AWS Amplify will provision, build, and deploy your site to a public, secure `https://main.dXXXXXXXX.amplifyapp.com` endpoint.
 
 ---
 
-## AWS SAM Infrastructure Deployment
+## AWS SAM Backend Deployment
 
-The infrastructure is defined in [`template.yaml`](template.yaml).
+The backend serverless infrastructure is defined in [`template.yaml`](template.yaml).
 
-### Build & Deploy with AWS SAM:
+### Build & Deploy:
 ```bash
 # 1. Build the SAM template
 sam build
 
-# 2. Deploy infrastructure interactively (guided)
-sam deploy --guided \
-  --stack-name monsoon-sentinel-infra \
-  --region ap-south-1 \
-  --parameter-overrides Environment=dev DynamoDBTableName=monsoon-sentinel-incidents EvidenceBucketPrefix=monsoon-sentinel-evidence
+# 2. Deploy to AWS
+sam deploy --guided
 ```
 
-### Infrastructure Cleanup (Teardown):
-To delete the deployed resources and avoid cloud billing:
-```bash
-# Delete SAM stack
-sam delete --stack-name monsoon-sentinel-infra --region ap-south-1
+### Inspect Output Endpoint:
+```powershell
+aws cloudformation describe-stacks `
+  --stack-name monsoon-sentinel-dev `
+  --region ap-south-1 `
+  --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" `
+  --output text
 ```
 
 ---
 
-## Automated Test Execution
-
-All tests run locally using `moto` AWS emulation and SQLite. No live AWS credentials or cloud costs are incurred.
-
-```bash
-# Run the complete test suite (30 passing tests)
-python -m pytest -v
-```
-
-### Test Coverage Breakdown:
-- `test_repository_contract.py`: Parametrized contract test asserting identical semantics and query behavior across both SQLite and DynamoDB implementations.
-- `test_dynamodb_repository.py`: Tests DynamoDB storage, conditional transitions, duplicate task dispatch prevention, and persistence across simulated application restarts.
-- `test_s3_storage.py`: Tests S3 private bucket creation, Block Public Access, AES256 encryption, file type validation (accepts PNG/JPG/PDF, rejects scripts), 5MB size limit, and presigned URLs.
-- `test_aws_workflow.py`: End-to-end 10-step municipal flood workflow test backed entirely by DynamoDB and S3.
-- `test_risk_engine.py`: Deterministic scoring formulas and missing data uncertainty penalties.
-- `test_prioritization.py`: Urgency ranking across multi-incident queues.
-- `test_lifecycle.py`: State machine progression and illegal transition guards.
-- `test_idempotency.py`: Task dispatch idempotency guards.
-- `test_verification.py`: Telemetry verification outcomes (`VERIFIED` vs `NEEDS_HUMAN_REVIEW`).
-- `test_api_workflow.py`: Full FastAPI integration test.
-
----
-
-## Running the Application Locally
+## Running Locally
 
 ### Step 1: Start Backend (Terminal 1)
 ```powershell
 cd backend
-python -m uvicorn app.api.main:app --port 8000 --reload
-```
-To run backend with DynamoDB (connecting to local DynamoDB or AWS):
-```powershell
-set STORAGE_BACKEND=dynamodb
-set DYNAMODB_TABLE_NAME=monsoon-sentinel-incidents
 python -m uvicorn app.api.main:app --port 8000 --reload
 ```
 
@@ -194,6 +135,8 @@ python -m uvicorn app.api.main:app --port 8000 --reload
 ### Step 2: Start Frontend (Terminal 2)
 ```powershell
 cd frontend
+npm install
 npm run dev
 ```
+
 Open `http://localhost:5173` in your browser.
