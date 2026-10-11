@@ -9,9 +9,9 @@
 
 ### AWS Persistence & Cloud Architecture
 - **Serverless API Runtime**: Containerized FastAPI application running on **AWS Lambda** via **Mangum** and **Amazon API Gateway** (Regional `/Prod` stage).
-- **Pluggable Persistence**: Switch between **SQLite/JSON** (local default) and **Amazon DynamoDB** (`ProjectTable`) via `STORAGE_BACKEND="sqlite" | "dynamodb"`.
+- **Pluggable Persistence**: Switch between **SQLite/JSON** (local default) and **Amazon DynamoDB** via `STORAGE_BACKEND="sqlite" | "dynamodb"`.
 - **Atomic Concurrency & Idempotency**: DynamoDB conditional writes enforce valid state transitions (`#status = :expected_status`) and prevent duplicate response task dispatches directly at the database engine level.
-- **Private Amazon S3 Storage**: Photographic evidence and municipal flood datasets are stored privately in encrypted S3 bucket (`project-evidence-a7k29x`) with Public Access Block enabled. Access is granted exclusively through short-lived presigned URLs.
+- **Private Amazon S3 Storage**: Photographic evidence and municipal flood datasets are stored privately in encrypted S3 buckets with Public Access Block enabled. Access is granted exclusively through short-lived presigned URLs.
 - **Production Frontend**: React 19 SPA bundled with Vite 8 and hosted globally via **AWS Amplify Hosting**.
 - **Infrastructure as Code**: AWS SAM template ([`template.yaml`](template.yaml)) defining the Lambda function, API Gateway, DynamoDB IAM policies, and S3 lifecycle configurations.
 
@@ -23,8 +23,8 @@
 - **Agent Orchestration**: **Strands Agents SDK** (`strands-agents 1.54.0`)
 - **Model Inference**: **Amazon SageMaker AI** (abstracted behind `SageMakerInferenceAdapter`, running in local mock mode without cloud billing)
 - **Database & Storage**:
-  - **Amazon DynamoDB**: Table `ProjectTable` with partition key `incident_id` and GSI `StatusIndex`.
-  - **Amazon S3**: Private bucket `project-evidence-a7k29x` with AES256 server-side encryption and Block Public Access.
+  - **Amazon DynamoDB**: Incidents table with partition key `incident_id` and GSI `StatusIndex`.
+  - **Amazon S3**: Private bucket (`monsoon-sentinel-evidence-<unique-id>`) with AES256 server-side encryption and Block Public Access.
   - **SQLite / JSON**: Local fallback repository implementing identical `IncidentRepositoryBase` contract.
 - **Frontend**: React 19, Vite 8, Tailwind CSS v4, Leaflet GIS, Lucide Icons, Hosted on **AWS Amplify**
 - **Testing**: Deterministic `pytest` unit test suite with `moto` local AWS emulation.
@@ -66,9 +66,9 @@ Configure application behavior using environment variables (never commit credent
 | Variable | Default | Description |
 |---|---|---|
 | `STORAGE_BACKEND` | `dynamodb` | Persistence backend: `sqlite` for local development, `dynamodb` for AWS persistence |
-| `DYNAMODB_TABLE_NAME` | `ProjectTable` | DynamoDB table name |
+| `DYNAMODB_TABLE_NAME` | `monsoon-sentinel-incidents` | DynamoDB table name |
 | `DYNAMODB_ENDPOINT_URL` | *(None)* | Optional custom endpoint URL (for DynamoDB Local emulator) |
-| `S3_BUCKET_NAME` / `EVIDENCE_BUCKET` | `project-evidence-a7k29x` | S3 private bucket name for evidence and datasets |
+| `S3_BUCKET_NAME` / `EVIDENCE_BUCKET` | `monsoon-sentinel-evidence` | S3 private bucket name for evidence and datasets |
 | `S3_ENDPOINT_URL` | *(None)* | Optional custom endpoint URL (for MinIO or S3 local emulator) |
 | `AWS_REGION` | `ap-south-1` | Target AWS region (e.g. `ap-south-1`) |
 | `USE_MOCK_SAGEMAKER` | `true` | Mock adapter toggle (`true` avoids cloud billing during development & demo) |
@@ -86,9 +86,9 @@ Configure application behavior using environment variables (never commit credent
 
 The frontend repository includes preconfigured AWS Amplify build pipelines ([`amplify.yml`](amplify.yml) and [`frontend/amplify.yml`](frontend/amplify.yml)):
 
-1. Open the **[AWS Amplify Console](https://ap-south-1.console.aws.amazon.com/amplify/home?region=ap-south-1)**.
+1. Open the **[AWS Amplify Console](https://console.aws.amazon.com/amplify/)**.
 2. Click **Create new app** > **Host web app**.
-3. Connect your GitHub repository (`Harshit-collab104/MonsoonSentinel`) and select branch `main`.
+3. Connect your Git repository (`<your-github-username>/<your-repo-name>`) and select branch `main`.
 4. Leave monorepo **unchecked** (Amplify will automatically use the root `amplify.yml`).
 5. Under **Environment variables**, set:
    - `VITE_API_BASE_URL`: `https://<your-api-id>.execute-api.ap-south-1.amazonaws.com/Prod`
@@ -113,7 +113,7 @@ sam deploy --guided
 ### Inspect Output Endpoint:
 ```powershell
 aws cloudformation describe-stacks `
-  --stack-name monsoon-sentinel-dev `
+  --stack-name <your-stack-name> `
   --region ap-south-1 `
   --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" `
   --output text
