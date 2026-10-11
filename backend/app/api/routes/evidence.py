@@ -109,9 +109,10 @@ def get_presigned_url(
     expires_in: int = Query(3600, ge=60, le=86400, description="Expiration seconds")
 ):
     """Generates a secure, time-limited presigned GET URL for private evidence inspection."""
+    clean_key = s3_key.strip().strip('"').strip("'").lstrip("/")
     try:
         s3 = get_s3_storage()
-        url = s3.generate_presigned_url(s3_key, expires_in_seconds=expires_in)
-        return {"s3_key": s3_key, "presigned_url": url, "expires_in_seconds": expires_in}
+        url = s3.generate_presigned_url(clean_key, expires_in_seconds=expires_in)
+        return {"s3_key": clean_key, "presigned_url": url, "expires_in_seconds": expires_in}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Presigned URL generation error: {str(e)}")

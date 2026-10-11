@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 import json
 import logging
@@ -159,9 +160,12 @@ class S3StorageService:
         """
         self.validate_file(filename, file_bytes, content_type)
 
-        clean_filename = os.path.basename(filename)
+        base_filename = os.path.basename(filename)
+        clean_name, ext = os.path.splitext(base_filename)
+        safe_filename = re.sub(r'[^a-zA-Z0-9_\-]', '_', clean_name) + ext.lower()
+        clean_incident_id = re.sub(r'[^a-zA-Z0-9_\-]', '_', incident_id.strip())
         unique_id = uuid.uuid4().hex[:8]
-        s3_key = f"evidence/{incident_id}/{unique_id}_{clean_filename}"
+        s3_key = f"evidence/{clean_incident_id}/{unique_id}_{safe_filename}"
 
         try:
             self._s3.put_object(
@@ -171,8 +175,8 @@ class S3StorageService:
                 ContentType=content_type,
                 ServerSideEncryption="AES256",
                 Metadata={
-                    "incident_id": incident_id,
-                    "original_filename": clean_filename
+                    "incident_id": clean_incident_id,
+                    "original_filename": safe_filename
                 }
             )
 
@@ -189,20 +193,22 @@ class S3StorageService:
 
     def generate_presigned_url(self, s3_key: str, expires_in_seconds: int = 3600) -> str:
         """Generates a secure, time-limited presigned GET URL for private evidence inspection."""
+        clean_key = s3_key.strip().strip('"').strip("'").lstrip("/")
         try:
             url = self._s3.generate_presigned_url(
                 ClientMethod="get_object",
-                Params={"Bucket": self.bucket_name, "Key": s3_key},
+                Params={"Bucket": self.bucket_name, "Key": clean_key},
                 ExpiresIn=expires_in_seconds
             )
             return url
         except ClientError as e:
-            logger.error(f"Failed to generate presigned URL for {s3_key}: {e}")
+            logger.error(f"Failed to generate presigned URL for {clean_key}: {e}")
             raise
 
     def upload_dataset(self, dataset_name: str, data: Union[str, bytes, dict]) -> str:
         """Stores municipal seed datasets, radar baselines, or drainage models in S3."""
-        s3_key = f"datasets/{dataset_name}.json"
+        clean_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', dataset_name.strip())
+        s3_key = f"datasets/{clean_name}.json"
         body_bytes = json.dumps(data).encode("utf-8") if isinstance(data, dict) else (
             data.encode("utf-8") if isinstance(data, str) else data
         )
@@ -222,7 +228,7 @@ class S3StorageService:
 
     def upload_archive(self, incident_id: str, data: Union[str, bytes, dict]) -> str:
         """Stores cold archived incident JSON records under archives/ with AES256 encryption."""
-        clean_id = incident_id.replace("..", "").replace("/", "").strip()
+        clean_id = re.sub(r'[^a-zA-Z0-9_\-]', '_', incident_id.strip())
         s3_key = f"archives/{clean_id}.json"
         body_bytes = json.dumps(data).encode("utf-8") if isinstance(data, dict) else (
             data.encode("utf-8") if isinstance(data, str) else data
