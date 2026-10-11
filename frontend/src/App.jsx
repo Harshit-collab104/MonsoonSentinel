@@ -265,6 +265,20 @@ export default function App() {
     }
   };
 
+  const handleArchiveIncident = async (incidentId) => {
+    setLoadingAction(true);
+    try {
+      const res = await api.archiveIncident(incidentId);
+      alert(`Incident ${incidentId} successfully archived to S3 (${res.s3_archive_key}) and purged from active database.`);
+      setSelectedIncident(null);
+      await fetchData();
+    } catch (err) {
+      alert(`Error archiving incident: ${err.message}`);
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
   const handleSendMessage = async (msgText) => {
     setChatLog((prev) => [...prev, { role: 'user', content: msgText }]);
     setLoadingChat(true);
@@ -526,6 +540,7 @@ export default function App() {
                         onOverrideVerify={handleOverrideVerify}
                         onCancelIncident={handleCancelIncident}
                         onUploadEvidence={handleUploadEvidence}
+                        onArchive={handleArchiveIncident}
                         loadingAction={loadingAction}
                       />
                     </div>
@@ -571,6 +586,7 @@ export default function App() {
                     onOverrideVerify={handleOverrideVerify}
                     onCancelIncident={handleCancelIncident}
                     onUploadEvidence={handleUploadEvidence}
+                    onArchive={handleArchiveIncident}
                     loadingAction={loadingAction}
                   />
                 ) : (

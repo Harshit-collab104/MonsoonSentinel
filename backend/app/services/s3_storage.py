@@ -85,8 +85,46 @@ class S3StorageService:
                         ]
                     }
                 )
+
+                self.configure_lifecycle_policy()
             else:
                 raise
+
+    def configure_lifecycle_policy(self):
+        """Configures automated S3 Lifecycle rules for cold incident archives and evidence photos:
+        - archives/ : Transition to Standard-IA after 30 days, Glacier Flexible Retrieval after 90 days, expire after 365 days.
+        - evidence/ : Transition photographic evidence to Standard-IA after 60 days, expire after 180 days.
+        """
+        try:
+            self._s3.put_bucket_lifecycle_configuration(
+                Bucket=self.bucket_name,
+                LifecycleConfiguration={
+                    "Rules": [
+                        {
+                            "ID": "IncidentArchivesColdStorageLifecycle",
+                            "Filter": {"Prefix": "archives/"},
+                            "Status": "Enabled",
+                            "Transitions": [
+                                {"Days": 30, "StorageClass": "STANDARD_IA"},
+                                {"Days": 90, "StorageClass": "GLACIER"}
+                            ],
+                            "Expiration": {"Days": 365}
+                        },
+                        {
+                            "ID": "PhotographicEvidenceLifecycle",
+                            "Filter": {"Prefix": "evidence/"},
+                            "Status": "Enabled",
+                            "Transitions": [
+                                {"Days": 60, "StorageClass": "STANDARD_IA"}
+                            ],
+                            "Expiration": {"Days": 180}
+                        }
+                    ]
+                }
+            )
+            logger.info("Configured S3 lifecycle rules for archives/ and evidence/.")
+        except ClientError as e:
+            logger.warning(f"Could not apply S3 lifecycle configuration: {e}")
 
     def validate_file(self, filename: str, file_bytes: bytes, content_type: Optional[str] = None):
         """Validates file extension, MIME type, and maximum file size."""
@@ -180,6 +218,27 @@ class S3StorageService:
             return s3_key
         except ClientError as e:
             logger.error(f"Failed to upload dataset {dataset_name} to S3: {e}")
+            raise
+
+    def upload_archive(self, incident_id: str, data: Union[str, bytes, dict]) -> str:
+        """Stores cold archived incident JSON records under archives/ with AES256 encryption."""
+        clean_id = incident_id.replace("..", "").replace("/", "").strip()
+        s3_key = f"archives/{clean_id}.json"
+        body_bytes = json.dumps(data).encode("utf-8") if isinstance(data, dict) else (
+            data.encode("utf-8") if isinstance(data, str) else data
+        )
+
+        try:
+            self._s3.put_object(
+                Bucket=self.bucket_name,
+                Key=s3_key,
+                Body=body_bytes,
+                ContentType="application/json",
+                ServerSideEncryption="AES256"
+            )
+            return s3_key
+        except ClientError as e:
+            logger.error(f"Failed to upload archive {clean_id} to S3: {e}")
             raise
 
     def get_dataset(self, dataset_name: str) -> Dict[str, Any]:

@@ -486,3 +486,34 @@ class IncidentService:
             reason=reason
         )
         return incident
+
+    def archive_incident(self, incident_id: str) -> Dict[str, Any]:
+        """Archives a verified or closed incident from DynamoDB to S3 long-term storage
+        with S3 Lifecycle policy suitability, then purges the hot DynamoDB record.
+        """
+        incident = self._get_or_raise(incident_id)
+        terminal_statuses = [IncidentStatus.VERIFIED, IncidentStatus.CANCELLED, IncidentStatus.REJECTED]
+        if incident.status not in terminal_statuses:
+            raise InvalidStateTransitionError(
+                incident.status.value,
+                "ARCHIVED",
+                f"Only closed or verified incidents can be archived to cold storage. Current status: {incident.status.value}"
+            )
+
+        from app.services.s3_storage import get_s3_storage
+        s3 = get_s3_storage()
+
+        # Archive complete incident JSON to S3 archive prefix
+        archive_data = incident.model_dump(mode="json")
+        archive_key = s3.upload_archive(incident.id, archive_data)
+
+        # Delete hot record from DynamoDB/local repository
+        deleted = self.repo.delete(incident_id)
+
+        return {
+            "incident_id": incident_id,
+            "archived": True,
+            "s3_archive_key": archive_key,
+            "purged_from_database": deleted,
+            "lifecycle_tier": "S3_STANDARD_INFREQUENT_ACCESS"
+        }

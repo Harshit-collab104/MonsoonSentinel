@@ -46,3 +46,14 @@ def get_incident_audit(incident_id: str):
         }
     except IncidentNotFoundError:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+@router.post("/{incident_id}/archive")
+def archive_incident(incident_id: str):
+    """Archives verified/closed incident to S3 cold storage and purges from active database."""
+    try:
+        return service.archive_incident(incident_id)
+    except IncidentNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+

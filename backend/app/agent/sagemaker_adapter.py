@@ -407,22 +407,121 @@ class SageMakerInferenceAdapter:
         elif "risk" in msg_lower:
             reasoning_summary = "Risk assessment pending calculation from live telemetry."
 
-        if "flow" in msg_lower or "rate" in msg_lower or "sensor" in msg_lower or "telemetry" in msg_lower:
+        tool_outputs = payload.get("tool_outputs", [])
+
+        # Priority 1: If compare_incidents tool output was generated
+        comp_tool = next((t for t in tool_outputs if isinstance(t, dict) and t.get("tool") == "compare_incidents"), None)
+        if comp_tool and isinstance(comp_tool.get("result"), dict):
+            comp_data = comp_tool["result"]
+            inc_list = comp_data.get("incidents", [])
+            lines = [f"**Multi-Sector Incident Prioritization & Ranking ({len(inc_list)} active sectors)**\n"]
+            for idx, item in enumerate(inc_list, 1):
+                r_score = f"{item.get('risk_score')}/100" if item.get('risk_score') is not None else "Pending"
+                lines.append(
+                    f"{idx}. **{item.get('incident_id')}** — {item.get('ward_name')}\n"
+                    f"   - **Risk:** `{r_score}` ({item.get('severity')}) | **Depth:** {item.get('water_depth_cm', 0)} cm | **Status:** `{item.get('status')}`"
+                )
+            text = "\n".join(lines)
+            return {
+                "is_mock": True,
+                "adapter": "MockSageMakerInferenceAdapter",
+                "endpoint_name": self.endpoint_name,
+                "response": text,
+                "reasoning_summary": f"Ranked {len(inc_list)} active municipal incidents by evaluated risk score and waterlogging depth.",
+            }
+
+        # Priority 2: If get_incident_audit tool output was generated
+        audit_tool = next((t for t in tool_outputs if isinstance(t, dict) and t.get("tool") == "get_incident_audit"), None)
+        if audit_tool and isinstance(audit_tool.get("result"), dict):
+            audit_data = audit_tool["result"]
+            history = audit_data.get("audit_history", [])
+            lines = [f"**Immutable Audit Trail for {inc_id} ({len(history)} events)**\n"]
+            for event in history:
+                actor = event.get("actor", "system")
+                action = event.get("action", "ACTION")
+                from_st = event.get("from_status") or "START"
+                to_st = event.get("to_status") or "CURRENT"
+                reason = event.get("reason") or "Standard lifecycle event"
+                lines.append(f"- **{action}** by `{actor}` (`{from_st}` → `{to_st}`): {reason}")
+            text = "\n".join(lines)
+            return {
+                "is_mock": True,
+                "adapter": "MockSageMakerInferenceAdapter",
+                "endpoint_name": self.endpoint_name,
+                "response": text,
+                "reasoning_summary": f"Audit log contains {len(history)} verified state transitions.",
+            }
+
+        # Priority 3: Intent matching based on user query and incident context
+        if "flow" in msg_lower or "rate" in msg_lower:
+            if ver:
+                flow = ver.get("sensor_flow_rate_lps", "N/A")
+                res_depth = ver.get("post_clearance_depth_cm", "N/A")
+                is_ver = ver.get("verified", False)
+                text = (
+                    f"The final culvert discharge flow rate recorded for **{inc_id}** is **{flow} L/s** "
+                    f"(with residual depth at {res_depth} cm, status: {'Verified ✅' if is_ver else 'Needs Review ⚠️'})."
+                )
+            else:
+                text = f"Incident `{inc_id}` has not completed sensor verification yet."
+
+        elif "audit" in msg_lower or "history" in msg_lower or "trail" in msg_lower:
+            audit_events = incident_context.get("audit_history", [])
+            if audit_events:
+                lines = [f"**Audit Trail for {inc_id} ({len(audit_events)} recorded actions)**\n"]
+                for e in audit_events[-5:]:  # show last 5
+                    lines.append(f"- `{e.get('action')}` by {e.get('actor')}: {e.get('reason')}")
+                text = "\n".join(lines)
+            else:
+                text = f"No audit history recorded for incident `{inc_id}` yet."
+
+        elif "approval" in msg_lower or "authorize" in msg_lower or "readiness" in msg_lower:
+            if status == "AWAITING_APPROVAL":
+                text = (
+                    f"**Dispatch Readiness for {inc_id}**\n\n"
+                    f"Incident `{inc_id}` is **AWAITING_APPROVAL**. Operational response plan is formulated:\n"
+                    f"- Action: `{rec.get('action_type', 'DEPLOY_DEWATERING_PUMP')}`\n"
+                    f"- Unit: {rec.get('assigned_unit', 'Rapid Response')}\n"
+                    f"- Requires human supervisor authorization before field dispatch."
+                )
+            elif status == "RECOMMENDED":
+                text = (
+                    f"**Dispatch Readiness for {inc_id}**\n\n"
+                    f"Incident `{inc_id}` is in state `RECOMMENDED`. It must be submitted for supervisor approval before dispatch."
+                )
+            elif status in ["APPROVED", "IN_PROGRESS"]:
+                text = f"Incident `{inc_id}` is already approved and currently in progress with task `{task.get('task_id', 'ACTIVE')}`."
+            else:
+                text = f"Incident `{inc_id}` is currently in state `{status}` (approval is required only after risk analysis and recommendation)."
+
+        elif "escalat" in msg_lower or "human review" in msg_lower or "anomaly" in msg_lower or "fail" in msg_lower:
+            if status == "NEEDS_HUMAN_REVIEW":
+                text = (
+                    f"**Supervisor Escalation Alert for {inc_id}**\n\n"
+                    f"Automated IoT verification flagged an anomaly:\n"
+                    f"- Discharge Flow Rate: `{ver.get('sensor_flow_rate_lps', 'N/A')} L/s`\n"
+                    f"- Residual Depth: `{ver.get('post_clearance_depth_cm', 'N/A')} cm`\n"
+                    f"- Status: `NEEDS_HUMAN_REVIEW`\n\n"
+                    f"Authorized actions: Supervisor may **re-dispatch** the crew for secondary desilting or **override verify** after visual inspection."
+                )
+            else:
+                text = f"Incident `{inc_id}` is currently `{status}` and has not triggered an anomaly or human-review escalation."
+
+        elif "sensor" in msg_lower or "telemetry" in msg_lower:
             if ver:
                 flow = ver.get("sensor_flow_rate_lps", "N/A")
                 res_depth = ver.get("post_clearance_depth_cm", "N/A")
                 is_ver = ver.get("verified", False)
                 notes = ver.get("notes", "No sensor notes.")
                 text = (
-                    f"**Sensor Telemetry & Verification for {inc_id}**\n\n"
-                    f"- **Culvert Discharge Flow Rate:** `{flow} L/s`\n"
-                    f"- **Residual Post-Clearance Depth:** `{res_depth} cm`\n"
-                    f"- **Verification Outcome:** {'✅ Verified (Passed)' if is_ver else '⚠️ Flagged (Needs Review)'}\n"
-                    f"- **Telemetry Notes:** {notes}\n"
-                    f"- **Sensor Type:** {'Simulated IoT Sensor' if ver.get('simulated') else 'Live Hardware Probe'}"
+                    f"**Sensor Telemetry for {inc_id}**\n\n"
+                    f"- Flow Rate: `{flow} L/s`\n"
+                    f"- Residual Depth: `{res_depth} cm`\n"
+                    f"- Status: {'Verified' if is_ver else 'Anomaly Flagged'}\n"
+                    f"- Notes: {notes}"
                 )
             else:
-                text = f"Incident `{inc_id}` has not undergone post-clearance sensor verification yet. Current lifecycle state is `{status}`."
+                text = f"Incident `{inc_id}` has no sensor telemetry recorded yet."
 
         elif "verify" in msg_lower or "verification" in msg_lower or "clearance" in msg_lower:
             if ver:
@@ -438,7 +537,7 @@ class SageMakerInferenceAdapter:
             else:
                 text = f"Incident `{inc_id}` has not completed post-clearance verification yet."
 
-        elif "summary" in msg_lower or "debrief" in msg_lower or "report" in msg_lower:
+        elif "summary" in msg_lower or "debrief" in msg_lower:
             text = (
                 f"**Executive Incident Debrief: {inc_id}**\n\n"
                 f"- **Sector:** {ward}\n"
@@ -463,7 +562,7 @@ class SageMakerInferenceAdapter:
             else:
                 text = f"Incident `{inc_id}` currently has no computed risk score. Telemetry analysis is required."
 
-        elif "recommend" in msg_lower or "action" in msg_lower or "team" in msg_lower or "crew" in msg_lower:
+        elif "recommend" in msg_lower or "action" in msg_lower or "team" in msg_lower or "crew" in msg_lower or "equipment" in msg_lower:
             if rec or task:
                 action_type = task.get("action_type") or rec.get("action_type", "DEPLOY_DEWATERING_PUMP")
                 assigned = task.get("assigned_unit") or rec.get("assigned_unit", "Municipal Rapid Response")
@@ -494,9 +593,9 @@ class SageMakerInferenceAdapter:
                     f"**Monsoon Sentinel Field Operations: {inc_id}**\n\n"
                     f"- **Location:** {ward}\n"
                     f"- **Current Status:** `{status}`\n"
-                    f"- **Assessed Risk:** `{score}/100` ({sev})\n"
+                    f"- **Assessed Risk:** `{score if score is not None else 'Pending'}/100` ({sev})\n"
                     f"{'- **Final Culvert Discharge:** `' + str(ver.get('sensor_flow_rate_lps', 'N/A')) + ' L/s` (Verified)' if ver.get('verified') else ''}\n\n"
-                    f"You can ask about risk breakdown, crew recommendations, or post-clearance sensor telemetry."
+                    f"You can ask about risk breakdown, crew recommendations, prioritization ranking, or sensor telemetry."
                 )
             else:
                 text = (

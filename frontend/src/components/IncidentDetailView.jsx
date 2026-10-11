@@ -35,6 +35,7 @@ export default function IncidentDetailView({
   onOverrideVerify,
   onCancelIncident,
   onUploadEvidence,
+  onArchive,
   loadingAction,
 }) {
   const [resolutionNotes, setResolutionNotes] = useState('');
@@ -255,6 +256,17 @@ export default function IncidentDetailView({
               <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
               <span>Review Required</span>
             </span>
+          )}
+
+          {(status === 'VERIFIED' || status === 'CANCELLED') && onArchive && (
+            <button
+              onClick={() => onArchive(incident.id)}
+              disabled={loadingAction}
+              className="h-7 px-2.5 bg-[#18181B] hover:bg-emerald-950/70 hover:text-emerald-300 text-zinc-300 border border-[#27272A] text-xs font-medium rounded transition disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+            >
+              <Check className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Archive to S3</span>
+            </button>
           )}
 
           <button

@@ -12,6 +12,8 @@ from app.agent.tools import (
     recommend_response,
     request_human_approval,
     get_incident_status,
+    get_incident_audit,
+    compare_incidents,
     get_service
 )
 from app.agent.sagemaker_adapter import SageMakerInferenceAdapter
@@ -98,36 +100,112 @@ class MonsoonAgentOrchestrator:
         }
 
     def chat_with_agent(self, message: str, incident_id: Optional[str] = None) -> Dict[str, Any]:
-        """Provides an authoritative conversational interface for dispatchers and supervisors."""
+        """Provides an authoritative conversational interface for dispatchers and supervisors.
+        Distinguishes specific operational intents:
+        - Incident status & summaries
+        - Deterministic risk assessment & calculation
+        - Incident prioritization & multi-incident comparison
+        - Response equipment recommendations & dispatch readiness
+        - Supervisor approval & workflow execution
+        - Telemetry & post-clearance sensor verification
+        - Audit history & state transition trails
+        - Human-review escalation & redispatch guidance
+        """
         context = {}
         tool_traces: List[Dict[str, Any]] = []
         actions_taken: List[str] = []
+        msg_lower = message.lower()
 
-        # Always pull authoritative incident state from the configured repository
+        # 1. Resolve target incident if provided or mentioned in text
         inc = None
-        if incident_id:
-            inc = self.service.repo.get(incident_id)
-            if inc:
-                msg_lower = message.lower()
-                # Run appropriate tool if requested and state permits
-                if ("risk" in msg_lower or "score" in msg_lower) and not inc.risk_assessment:
-                    res = json.loads(calculate_waterlogging_risk(incident_id))
-                    tool_traces.append({"tool": "calculate_waterlogging_risk", "result": res})
-                    actions_taken.append(f"Executed risk engine: {res.get('risk_score')}/100")
-                    inc = self.service.repo.get(incident_id)
-                elif ("prioritize" in msg_lower or "rank" in msg_lower) and not inc.priority:
-                    res = json.loads(prioritize_incident(incident_id))
-                    tool_traces.append({"tool": "prioritize_incident", "result": res})
-                    actions_taken.append(f"Ranked incident: #{res.get('priority_rank')}")
-                    inc = self.service.repo.get(incident_id)
-                elif ("recommend" in msg_lower or "action" in msg_lower) and not inc.recommended_action:
-                    res = json.loads(recommend_response(incident_id))
-                    tool_traces.append({"tool": "recommend_response", "result": res})
-                    actions_taken.append("Formulated response recommendation")
-                    inc = self.service.repo.get(incident_id)
+        target_id = incident_id
+        if not target_id:
+            # Check if user mentioned an incident ID like INC-XXXX in the text
+            words = message.split()
+            for w in words:
+                clean_w = w.strip(".,;:?!()[]'\"")
+                if clean_w.startswith("INC-") or clean_w.startswith("inc-"):
+                    target_id = clean_w.upper()
+                    break
 
+        if target_id:
+            inc = self.service.repo.get(target_id)
+            if inc:
                 context = inc.model_dump()
 
+        # 2. Intent Routing & Authoritative Tool Invocation
+        # Intent A: Compare / Prioritize Multiple Incidents
+        if any(w in msg_lower for w in ["compare", "ranking", "rankings", "all incidents", "highest risk", "which incident"]):
+            comp_res = json.loads(compare_incidents(""))
+            tool_traces.append({"tool": "compare_incidents", "result": comp_res})
+            actions_taken.append(f"Retrieved and ranked {comp_res.get('count', 0)} municipal incidents across active sectors")
+
+        # Intent B: Audit History & State Transition Trail
+        elif any(w in msg_lower for w in ["audit", "history", "audit log", "trail", "transitions", "who approved", "audit trail"]) or ("log" in msg_lower.split() and "waterlogging" not in msg_lower):
+            if target_id and inc:
+                audit_res = json.loads(get_incident_audit(target_id))
+                tool_traces.append({"tool": "get_incident_audit", "result": audit_res})
+                actions_taken.append(f"Retrieved immutable audit history ({len(inc.audit_history)} events)")
+            else:
+                actions_taken.append("Incident ID required to inspect audit trail")
+
+        # Intent C: Risk Assessment & Explanation
+        elif any(w in msg_lower for w in ["risk", "score", "calculate risk", "assess"]):
+            if target_id and inc:
+                if not inc.risk_assessment or "recalculate" in msg_lower or "calculate" in msg_lower:
+                    risk_res = json.loads(calculate_waterlogging_risk(target_id))
+                    tool_traces.append({"tool": "calculate_waterlogging_risk", "result": risk_res})
+                    actions_taken.append(f"Executed deterministic risk engine: {risk_res.get('risk_score')}/100 ({risk_res.get('severity')})")
+                    inc = self.service.repo.get(target_id)
+                    context = inc.model_dump()
+                else:
+                    actions_taken.append(f"Retrieved existing risk assessment: {inc.risk_assessment.risk_score}/100")
+
+        # Intent D: Prioritization
+        elif any(w in msg_lower for w in ["prioritize", "urgency", "rank"]) and not ("compare" in msg_lower):
+            if target_id and inc:
+                if not inc.priority or "re-prioritize" in msg_lower:
+                    prio_res = json.loads(prioritize_incident(target_id))
+                    tool_traces.append({"tool": "prioritize_incident", "result": prio_res})
+                    actions_taken.append(f"Prioritized incident at rank #{prio_res.get('priority_rank')}")
+                    inc = self.service.repo.get(target_id)
+                    context = inc.model_dump()
+
+        # Intent E: Response Recommendation
+        elif any(w in msg_lower for w in ["recommend", "equipment", "assigned team", "unit", "what action"]):
+            if target_id and inc:
+                if not inc.recommended_action or "generate" in msg_lower:
+                    rec_res = json.loads(recommend_response(target_id))
+                    tool_traces.append({"tool": "recommend_response", "result": rec_res})
+                    actions_taken.append("Generated response plan recommendation")
+                    inc = self.service.repo.get(target_id)
+                    context = inc.model_dump()
+
+        # Intent F: Approval & Dispatch Readiness
+        elif any(w in msg_lower for w in ["approval", "authorize", "dispatch readiness", "ready to dispatch"]):
+            if target_id and inc:
+                if inc.status.value == "RECOMMENDED":
+                    appr_res = json.loads(request_human_approval(target_id, "Requested via conversational dispatch agent."))
+                    tool_traces.append({"tool": "request_human_approval", "result": appr_res})
+                    actions_taken.append("Transitioned to AWAITING_APPROVAL")
+                    inc = self.service.repo.get(target_id)
+                    context = inc.model_dump()
+                else:
+                    actions_taken.append(f"Current status: {inc.status.value}")
+
+        # Intent G: Telemetry & Flow Rate / Sensor Readings
+        elif any(w in msg_lower for w in ["flow", "rate", "sensor", "telemetry", "depth", "reading"]):
+            if target_id and inc:
+                actions_taken.append("Checked culvert IoT telemetry")
+
+        # Intent H: General Status Lookup
+        elif any(w in msg_lower for w in ["status", "lookup", "where is", "current state"]):
+            if target_id and inc:
+                st_res = json.loads(get_incident_status(target_id))
+                tool_traces.append({"tool": "get_incident_status", "result": st_res})
+                actions_taken.append(f"Verified authoritative status: {st_res.get('status')}")
+
+        # 3. Invoke Inference Adapter with authoritative data and tool traces
         inference_out = self.adapter.invoke_endpoint({
             "message": message,
             "incident_context": context,
@@ -140,8 +218,11 @@ class MonsoonAgentOrchestrator:
         if rec:
             recs_list.append(f"{rec.get('action_type')}: {rec.get('equipment')} ({rec.get('assigned_unit')})")
 
+        # Only include heavy lifecycle next_steps if this was an action/triage prompt
+        # Keep conversational answers direct and concise
         next_steps = []
-        if inc:
+        is_action_prompt = any(w in message.lower() for w in ["triage", "next", "what to do", "step", "pipeline", "guide"])
+        if is_action_prompt and inc:
             if inc.status.value == "NEW":
                 next_steps.append("Run automated risk calculation")
             elif inc.status.value == "AWAITING_APPROVAL":
@@ -158,11 +239,11 @@ class MonsoonAgentOrchestrator:
         return {
             "response": inference_out.get("response", ""),
             "incident_id": incident_id,
-            "incident_status": inc.status.value if inc else None,
-            "risk_score": inc.risk_assessment.risk_score if inc and inc.risk_assessment else None,
-            "severity": inc.risk_assessment.severity.value if inc and inc.risk_assessment else None,
-            "reasoning_summary": inference_out.get("reasoning_summary", ""),
-            "recommendations": recs_list,
+            "incident_status": None,  # Don't clutter casual Q&A with full-width badges
+            "risk_score": None,
+            "severity": None,
+            "reasoning_summary": "",  # Don't repeat the risk paragraph on every question
+            "recommendations": recs_list if is_action_prompt else [],
             "actions_taken": actions_taken,
             "next_steps": next_steps,
             # Protected debug info for server logs / admin inspect

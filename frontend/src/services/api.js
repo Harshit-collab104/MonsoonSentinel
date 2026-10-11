@@ -1,17 +1,33 @@
-const BASE_URL = '/api/v1';
+function resolveBaseUrl() {
+  const envUrl = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
+  if (!envUrl) {
+    return '/api/v1';
+  }
+  if (envUrl.endsWith('/api/v1')) {
+    return envUrl;
+  }
+  return `${envUrl}/api/v1`;
+}
+
+const BASE_URL = resolveBaseUrl();
 
 async function request(endpoint, options = {}) {
   const url = `${BASE_URL}${endpoint}`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), options.timeout || 30000);
+
   const config = {
     headers: {
       'Content-Type': 'application/json',
       ...options.headers,
     },
+    signal: options.signal || controller.signal,
     ...options,
   };
 
   try {
     const res = await fetch(url, config);
+    clearTimeout(timeoutId);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const errorMsg = data?.message || data?.detail || `HTTP Error ${res.status}`;
@@ -19,6 +35,11 @@ async function request(endpoint, options = {}) {
     }
     return data;
   } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      console.error(`API Timeout (30s) on ${endpoint}`);
+      throw new Error(`Request timed out after 30 seconds for ${endpoint}`);
+    }
     console.error(`API Error on ${endpoint}:`, err);
     throw err;
   }
@@ -56,6 +77,7 @@ export const api = {
   },
   getPresignedUrl: (s3Key) => request(`/evidence/presigned-url?s3_key=${encodeURIComponent(s3Key)}`),
   getAuditHistory: (id) => request(`/incidents/${id}/audit`),
+  archiveIncident: (id) => request(`/incidents/${id}/archive`, { method: 'POST' }),
   chatAgent: (payload) => request('/agent/chat', { method: 'POST', body: JSON.stringify(payload) }),
   getAgentTools: () => request('/agent/tools'),
 };

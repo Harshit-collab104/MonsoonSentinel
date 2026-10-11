@@ -158,7 +158,27 @@ def verify_resolution(
 
 @tool
 def get_incident_status(incident_id: str) -> str:
-    """Fetches the complete status, risk score, task, and lifecycle state of an incident."""
+    """Fetches the current authoritative status, risk score, task, and lifecycle state of an incident."""
+    svc = get_service()
+    inc = svc.repo.get(incident_id)
+    if not inc:
+        return json.dumps({"error": f"Incident {incident_id} not found."})
+    return json.dumps({
+        "incident_id": inc.id,
+        "ward_name": inc.report.ward_name,
+        "status": inc.status.value,
+        "water_depth_cm": inc.report.water_depth_cm,
+        "drain_blockage_level": inc.report.drain_blockage_level.value,
+        "risk_score": inc.risk_assessment.risk_score if inc.risk_assessment else None,
+        "severity": inc.risk_assessment.severity.value if inc.risk_assessment else None,
+        "task": inc.response_task.model_dump(mode="json") if inc.response_task else None,
+        "verification": inc.verification.model_dump(mode="json") if inc.verification else None,
+        "audit_count": len(inc.audit_history)
+    })
+
+@tool
+def get_incident_audit(incident_id: str) -> str:
+    """Retrieves the complete immutable audit history and state transition log for an incident."""
     svc = get_service()
     inc = svc.repo.get(incident_id)
     if not inc:
@@ -166,12 +186,39 @@ def get_incident_status(incident_id: str) -> str:
     return json.dumps({
         "incident_id": inc.id,
         "status": inc.status.value,
-        "risk_score": inc.risk_assessment.risk_score if inc.risk_assessment else None,
-        "severity": inc.risk_assessment.severity.value if inc.risk_assessment else None,
-        "task": inc.response_task.model_dump() if inc.response_task else None,
-        "verification": inc.verification.model_dump() if inc.verification else None,
-        "audit_count": len(inc.audit_history)
+        "audit_history": [a.model_dump(mode="json") for a in inc.audit_history]
     })
+
+@tool
+def compare_incidents(incident_ids: str = "") -> str:
+    """Compares active incidents by risk score, severity, water depth, and priority ranking across wards."""
+    svc = get_service()
+    all_inc = svc.repo.list_all()
+    if incident_ids:
+        target_ids = [i.strip() for i in incident_ids.split(",") if i.strip()]
+        matched = [i for i in all_inc if i.id in target_ids]
+    else:
+        matched = [i for i in all_inc if i.status.value not in ["RESOLVED", "VERIFIED", "CANCELLED", "REJECTED"]]
+    
+    # Sort by urgency: highest risk score first
+    matched.sort(
+        key=lambda x: (x.risk_assessment.risk_score if x.risk_assessment else -1),
+        reverse=True
+    )
+    
+    comparisons = []
+    for inc in matched:
+        comparisons.append({
+            "incident_id": inc.id,
+            "ward_name": inc.report.ward_name,
+            "status": inc.status.value,
+            "water_depth_cm": inc.report.water_depth_cm,
+            "blockage": inc.report.drain_blockage_level.value,
+            "risk_score": inc.risk_assessment.risk_score if inc.risk_assessment else None,
+            "severity": inc.risk_assessment.severity.value if inc.risk_assessment else "PENDING",
+            "assigned_unit": inc.response_task.assigned_unit if inc.response_task else None
+        })
+    return json.dumps({"count": len(comparisons), "incidents": comparisons})
 
 ALL_TOOLS = [
     get_rainfall_forecast,
@@ -186,4 +233,6 @@ ALL_TOOLS = [
     record_resolution,
     verify_resolution,
     get_incident_status,
+    get_incident_audit,
+    compare_incidents,
 ]
