@@ -35,7 +35,7 @@ class IncidentService:
         IncidentStatus.APPROVED: [IncidentStatus.IN_PROGRESS],
         IncidentStatus.IN_PROGRESS: [IncidentStatus.RESOLVED],
         IncidentStatus.RESOLVED: [IncidentStatus.VERIFIED, IncidentStatus.NEEDS_HUMAN_REVIEW],
-        IncidentStatus.NEEDS_HUMAN_REVIEW: [IncidentStatus.IN_PROGRESS, IncidentStatus.CANCELLED],
+        IncidentStatus.NEEDS_HUMAN_REVIEW: [IncidentStatus.IN_PROGRESS, IncidentStatus.VERIFIED, IncidentStatus.CANCELLED],
         IncidentStatus.REJECTED: [],
         IncidentStatus.CANCELLED: [],
         IncidentStatus.VERIFIED: [],
@@ -391,4 +391,98 @@ class IncidentService:
                 details={"verified": False, "flow_rate": sensor_flow_rate_lps, "depth_cm": post_clearance_depth_cm}
             )
 
+        return incident
+
+    def redispatch_incident(
+        self,
+        incident_id: str,
+        reason: str = "Supervisor ordered crew re-dispatch and secondary desilting/clearance.",
+        reviewer: str = "Supervisor_Dispatch"
+    ) -> Incident:
+        """Allows supervisor to re-dispatch crew when an incident fails telemetry verification."""
+        incident = self._get_or_raise(incident_id)
+        if incident.status != IncidentStatus.NEEDS_HUMAN_REVIEW:
+            raise InvalidStateTransitionError(
+                incident.status.value,
+                IncidentStatus.IN_PROGRESS.value,
+                "Only incidents in NEEDS_HUMAN_REVIEW can be re-dispatched."
+            )
+
+        if incident.response_task:
+            incident.response_task.status = "DISPATCHED"
+            incident.response_task.resolution_notes = None
+            incident.response_task.completed_at = None
+
+        incident = self.transition_state(
+            incident,
+            IncidentStatus.IN_PROGRESS,
+            actor=reviewer,
+            action="SUPERVISOR_REDISPATCH",
+            reason=reason,
+            details={"reviewer": reviewer, "action": "REDISPATCH"}
+        )
+        return incident
+
+    def supervisor_override_verify(
+        self,
+        incident_id: str,
+        reviewer: str = "Supervisor_Dispatch",
+        rationale: str = "Manual field inspection conducted; site confirmed clear of blockage."
+    ) -> Incident:
+        """Allows supervisor to manually sign off and mark an incident as VERIFIED."""
+        incident = self._get_or_raise(incident_id)
+        if incident.status != IncidentStatus.NEEDS_HUMAN_REVIEW:
+            raise InvalidStateTransitionError(
+                incident.status.value,
+                IncidentStatus.VERIFIED.value,
+                "Only incidents in NEEDS_HUMAN_REVIEW can be manually verified."
+            )
+
+        if incident.verification:
+            incident.verification.verified = True
+            incident.verification.verified_by = f"Supervisor Override ({reviewer})"
+            incident.verification.notes = f"Supervisor override verified by {reviewer}: {rationale}"
+        else:
+            incident.verification = VerificationResult(
+                verified=True,
+                verified_at=datetime.now(timezone.utc),
+                verified_by=f"Supervisor Override ({reviewer})",
+                simulated=False,
+                sensor_flow_rate_lps=60.0,
+                post_clearance_depth_cm=0.0,
+                notes=f"Supervisor override verified by {reviewer}: {rationale}",
+                evidence_matched=True
+            )
+
+        incident = self.transition_state(
+            incident,
+            IncidentStatus.VERIFIED,
+            actor=reviewer,
+            action="SUPERVISOR_OVERRIDE_VERIFY",
+            reason=rationale,
+            details={"reviewer": reviewer, "rationale": rationale}
+        )
+        return incident
+
+    def cancel_incident(
+        self,
+        incident_id: str,
+        actor: str = "supervisor",
+        reason: str = "Incident cancelled/closed by supervisor."
+    ) -> Incident:
+        """Cancels an incident from any cancellable state."""
+        incident = self._get_or_raise(incident_id)
+        if IncidentStatus.CANCELLED not in self.VALID_TRANSITIONS.get(incident.status, []):
+            raise InvalidStateTransitionError(
+                incident.status.value,
+                IncidentStatus.CANCELLED.value,
+                f"Incident in status {incident.status.value} cannot be cancelled."
+            )
+        incident = self.transition_state(
+            incident,
+            IncidentStatus.CANCELLED,
+            actor=actor,
+            action="CANCEL_INCIDENT",
+            reason=reason
+        )
         return incident

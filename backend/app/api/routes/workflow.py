@@ -125,3 +125,57 @@ def verify_resolution(incident_id: str, payload: VerificationRequest):
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
     except InvalidStateTransitionError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+class RedispatchRequest(BaseModel):
+    reason: str = Field("Supervisor ordered crew re-dispatch and secondary desilting.", min_length=3)
+    reviewer: str = Field("Supervisor_Dispatch", description="Supervisor ID")
+
+class OverrideVerifyRequest(BaseModel):
+    rationale: str = Field(..., min_length=3, description="Justification for manual verification")
+    reviewer: str = Field("Supervisor_Dispatch", description="Supervisor ID")
+
+class CancelRequest(BaseModel):
+    reason: str = Field("Incident cancelled by supervisor.", min_length=3)
+    reviewer: str = Field("Supervisor_Dispatch", description="Supervisor ID")
+
+@router.post("/{incident_id}/redispatch", response_model=Incident)
+def redispatch_incident(incident_id: str, payload: Optional[RedispatchRequest] = None):
+    """Supervisor action: Re-dispatch field crew for an incident stuck in NEEDS_HUMAN_REVIEW."""
+    try:
+        reason = payload.reason if payload else "Supervisor ordered crew re-dispatch and secondary desilting."
+        reviewer = payload.reviewer if payload else "Supervisor_Dispatch"
+        return service.redispatch_incident(incident_id, reason=reason, reviewer=reviewer)
+    except IncidentNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+    except InvalidStateTransitionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/{incident_id}/override-verify", response_model=Incident)
+def override_verify_incident(incident_id: str, payload: OverrideVerifyRequest):
+    """Supervisor action: Manually override telemetry anomaly and mark incident as VERIFIED."""
+    try:
+        return service.supervisor_override_verify(
+            incident_id=incident_id,
+            reviewer=payload.reviewer,
+            rationale=payload.rationale
+        )
+    except IncidentNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+    except InvalidStateTransitionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/{incident_id}/cancel", response_model=Incident)
+def cancel_incident(incident_id: str, payload: Optional[CancelRequest] = None):
+    """Supervisor action: Cancel / close incident."""
+    try:
+        reason = payload.reason if payload else "Incident cancelled by supervisor."
+        reviewer = payload.reviewer if payload else "Supervisor_Dispatch"
+        return service.cancel_incident(
+            incident_id=incident_id,
+            actor=reviewer,
+            reason=reason
+        )
+    except IncidentNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+    except InvalidStateTransitionError as e:
+        raise HTTPException(status_code=400, detail=str(e))

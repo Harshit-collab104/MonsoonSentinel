@@ -2,11 +2,126 @@ import math
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 
-# Preloaded municipal ward knowledge base & sensor network metadata
+# Preloaded Indian municipal ward knowledge base & sensor network metadata
 WARD_KNOWLEDGE_BASE = {
+    # Bengaluru Municipal Corporation (BBMP)
+    "WARD-BLR-01": {
+        "name": "Bengaluru - Koramangala 80ft Road & Ejipura Outfall",
+        "historical_waterlogging_frequency": "HIGH",
+        "historical_score": 92.0,
+        "base_elevation_m": 12.5,
+        "is_low_elevation_underpass": True,
+        "has_hospital_or_transit": True,
+        "drain_capacity_cusecs": 160.0,
+        "drain_network_id": "DRN-BLR-KORAMANGALA",
+        "primary_gauge_id": "RAIN-BLR-G01"
+    },
+    "WARD-BLR-02": {
+        "name": "Bengaluru - Silk Board Junction & Madiwala Basin",
+        "historical_waterlogging_frequency": "HIGH",
+        "historical_score": 95.0,
+        "base_elevation_m": 11.2,
+        "is_low_elevation_underpass": True,
+        "has_hospital_or_transit": True,
+        "drain_capacity_cusecs": 210.0,
+        "drain_network_id": "DRN-BLR-SILKBOARD",
+        "primary_gauge_id": "RAIN-BLR-G02"
+    },
+    "WARD-BLR-03": {
+        "name": "Bengaluru - Bellandur Lake Spillway & Eco-Space Sluice",
+        "historical_waterlogging_frequency": "HIGH",
+        "historical_score": 88.0,
+        "base_elevation_m": 13.0,
+        "is_low_elevation_underpass": False,
+        "has_hospital_or_transit": True,
+        "drain_capacity_cusecs": 190.0,
+        "drain_network_id": "DRN-BLR-BELLANDUR",
+        "primary_gauge_id": "RAIN-BLR-G03"
+    },
+    "WARD-BLR-04": {
+        "name": "Bengaluru - Hebbal Flyover SWD & Nagavara Feeder",
+        "historical_waterlogging_frequency": "MEDIUM",
+        "historical_score": 58.0,
+        "base_elevation_m": 18.2,
+        "is_low_elevation_underpass": True,
+        "has_hospital_or_transit": True,
+        "drain_capacity_cusecs": 110.0,
+        "drain_network_id": "DRN-BLR-HEBBAL",
+        "primary_gauge_id": "RAIN-BLR-G04"
+    },
+    # Mumbai Municipal Corporation (BMC)
+    "WARD-BOM-01": {
+        "name": "Mumbai - Hindmata Cinema & Dadar TT Pumping Station",
+        "historical_waterlogging_frequency": "HIGH",
+        "historical_score": 98.0,
+        "base_elevation_m": 3.8,
+        "is_low_elevation_underpass": True,
+        "has_hospital_or_transit": True,
+        "drain_capacity_cusecs": 350.0,
+        "drain_network_id": "DRN-BOM-HINDMATA",
+        "primary_gauge_id": "RAIN-BOM-G01"
+    },
+    "WARD-BOM-02": {
+        "name": "Mumbai - Milan Subway & Santacruz West SWD",
+        "historical_waterlogging_frequency": "HIGH",
+        "historical_score": 94.0,
+        "base_elevation_m": 2.9,
+        "is_low_elevation_underpass": True,
+        "has_hospital_or_transit": False,
+        "drain_capacity_cusecs": 180.0,
+        "drain_network_id": "DRN-BOM-MILAN",
+        "primary_gauge_id": "RAIN-BOM-G02"
+    },
+    "WARD-BOM-03": {
+        "name": "Mumbai - Kurla Mithi River Outfall & Kranti Nagar",
+        "historical_waterlogging_frequency": "HIGH",
+        "historical_score": 96.0,
+        "base_elevation_m": 2.1,
+        "is_low_elevation_underpass": False,
+        "has_hospital_or_transit": True,
+        "drain_capacity_cusecs": 420.0,
+        "drain_network_id": "DRN-BOM-MITHI",
+        "primary_gauge_id": "RAIN-BOM-G03"
+    },
+    # Delhi Flood Control & Irrigation (I&FC)
+    "WARD-DEL-01": {
+        "name": "Delhi - Minto Bridge Railway Underpass Basin",
+        "historical_waterlogging_frequency": "HIGH",
+        "historical_score": 96.0,
+        "base_elevation_m": 202.0,
+        "is_low_elevation_underpass": True,
+        "has_hospital_or_transit": True,
+        "drain_capacity_cusecs": 130.0,
+        "drain_network_id": "DRN-DEL-MINTO",
+        "primary_gauge_id": "RAIN-DEL-G01"
+    },
+    "WARD-DEL-02": {
+        "name": "Delhi - ITO Ring Road & Yamuna Barrage Gate 12",
+        "historical_waterlogging_frequency": "HIGH",
+        "historical_score": 88.0,
+        "base_elevation_m": 204.0,
+        "is_low_elevation_underpass": False,
+        "has_hospital_or_transit": True,
+        "drain_capacity_cusecs": 280.0,
+        "drain_network_id": "DRN-DEL-ITO",
+        "primary_gauge_id": "RAIN-DEL-G02"
+    },
+    # Chennai Municipal Corporation (GCC)
+    "WARD-CHE-01": {
+        "name": "Chennai - Velachery 100ft Road & Lake Canal",
+        "historical_waterlogging_frequency": "HIGH",
+        "historical_score": 91.0,
+        "base_elevation_m": 4.5,
+        "is_low_elevation_underpass": False,
+        "has_hospital_or_transit": True,
+        "drain_capacity_cusecs": 240.0,
+        "drain_network_id": "DRN-CHE-VELACHERY",
+        "primary_gauge_id": "RAIN-CHE-G01"
+    },
+    # Backward compatibility aliases
     "WARD-12": {
-        "name": "Central Metro & Commercial Hub",
-        "historical_waterlogging_frequency": "HIGH", # Chronic hotspot
+        "name": "Bengaluru - Central Metro & Majestic Basin",
+        "historical_waterlogging_frequency": "HIGH",
         "historical_score": 85.0,
         "base_elevation_m": 14.2,
         "is_low_elevation_underpass": True,
@@ -16,7 +131,7 @@ WARD_KNOWLEDGE_BASE = {
         "primary_gauge_id": "RAIN-G12"
     },
     "WARD-04": {
-        "name": "North Industrial Estate & Culvert Zone",
+        "name": "Bengaluru - North Peenya Industrial Estate",
         "historical_waterlogging_frequency": "MEDIUM",
         "historical_score": 55.0,
         "base_elevation_m": 18.5,
@@ -27,7 +142,7 @@ WARD_KNOWLEDGE_BASE = {
         "primary_gauge_id": "RAIN-G04"
     },
     "WARD-07": {
-        "name": "South Lakeside & Riverfront Drainage Basin",
+        "name": "Bengaluru - South Bellandur Lakeside Basin",
         "historical_waterlogging_frequency": "HIGH",
         "historical_score": 90.0,
         "base_elevation_m": 11.0,
@@ -38,7 +153,7 @@ WARD_KNOWLEDGE_BASE = {
         "primary_gauge_id": "RAIN-G07"
     },
     "WARD-19": {
-        "name": "Eastern Hills Residential Heights",
+        "name": "Bengaluru - Eastern Whitefield Heights",
         "historical_waterlogging_frequency": "LOW",
         "historical_score": 15.0,
         "base_elevation_m": 35.0,
@@ -52,6 +167,16 @@ WARD_KNOWLEDGE_BASE = {
 
 # Simulated sensor feeds for rainfall intensity (mm/h)
 GAUGE_TELEMETRY = {
+    "RAIN-BLR-G01": {"intensity_mm_per_hr": 48.0, "status": "ONLINE", "forecast_next_2h_mm": 65.0},
+    "RAIN-BLR-G02": {"intensity_mm_per_hr": 55.0, "status": "ONLINE", "forecast_next_2h_mm": 72.0},
+    "RAIN-BLR-G03": {"intensity_mm_per_hr": 42.0, "status": "ONLINE", "forecast_next_2h_mm": 58.0},
+    "RAIN-BLR-G04": {"intensity_mm_per_hr": 22.0, "status": "ONLINE", "forecast_next_2h_mm": 30.0},
+    "RAIN-BOM-G01": {"intensity_mm_per_hr": 68.0, "status": "ONLINE", "forecast_next_2h_mm": 90.0},
+    "RAIN-BOM-G02": {"intensity_mm_per_hr": 52.0, "status": "ONLINE", "forecast_next_2h_mm": 70.0},
+    "RAIN-BOM-G03": {"intensity_mm_per_hr": 64.0, "status": "ONLINE", "forecast_next_2h_mm": 85.0},
+    "RAIN-DEL-G01": {"intensity_mm_per_hr": 45.0, "status": "ONLINE", "forecast_next_2h_mm": 60.0},
+    "RAIN-DEL-G02": {"intensity_mm_per_hr": 38.0, "status": "ONLINE", "forecast_next_2h_mm": 48.0},
+    "RAIN-CHE-G01": {"intensity_mm_per_hr": 50.0, "status": "ONLINE", "forecast_next_2h_mm": 68.0},
     "RAIN-G12": {"intensity_mm_per_hr": 42.5, "status": "ONLINE", "forecast_next_2h_mm": 55.0},
     "RAIN-G04": {"intensity_mm_per_hr": 24.0, "status": "ONLINE", "forecast_next_2h_mm": 30.0},
     "RAIN-G07": {"intensity_mm_per_hr": 48.0, "status": "ONLINE", "forecast_next_2h_mm": 62.0},

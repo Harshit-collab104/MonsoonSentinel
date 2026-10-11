@@ -1,0 +1,106 @@
+# ==============================================================================
+# Monsoon Sentinel - Comprehensive .gitignore
+# ==============================================================================
+
+# AWS SAM build directory & runtime caches
+.aws-sam/
+samconfig.toml
+
+# ------------------------------------------------------------------------------
+# Python byte-code, compiled artifacts & caches across all directories
+# ------------------------------------------------------------------------------
+__pycache__/
+**/__pycache__/
+*/**/__pycache__/
+*.py[cod]
+*/**/*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Pytest & testing caches
+.pytest_cache/
+**/.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+nosetests.xml
+coverage.xml
+
+# Python virtual environments & packages
+.venv/
+**/.venv/
+venv/
+**/venv/
+ENV/
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+**/*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ------------------------------------------------------------------------------
+# Local databases, telemetry dumps & secrets
+# ------------------------------------------------------------------------------
+*.db
+*.sqlite3
+*.db-journal
+*.sqlite3-journal
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ------------------------------------------------------------------------------
+# Frontend & Node dependencies
+# ------------------------------------------------------------------------------
+node_modules/
+**/node_modules/
+frontend/dist/
+dist/
+dist-ssr/
+*.local
+.npm/
+.eslintcache
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ------------------------------------------------------------------------------
+# Operating System & IDE artifacts
+# ------------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~

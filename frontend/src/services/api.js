@@ -37,7 +37,26 @@ export const api = {
   createTask: (id) => request(`/incidents/${id}/tasks`, { method: 'POST' }),
   resolveIncident: (id, payload) => request(`/incidents/${id}/resolve`, { method: 'POST', body: JSON.stringify(payload) }),
   verifyIncident: (id, payload) => request(`/incidents/${id}/verify`, { method: 'POST', body: JSON.stringify(payload) }),
+  redispatchIncident: (id, payload) => request(`/incidents/${id}/redispatch`, { method: 'POST', body: JSON.stringify(payload) }),
+  overrideVerifyIncident: (id, payload) => request(`/incidents/${id}/override-verify`, { method: 'POST', body: JSON.stringify(payload) }),
+  cancelIncident: (id, payload) => request(`/incidents/${id}/cancel`, { method: 'POST', body: JSON.stringify(payload) }),
+  uploadEvidence: async (incidentId, file, attachToTask = false) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('attach_to_task', String(attachToTask));
+    const res = await fetch(`${BASE_URL}/evidence/upload/${incidentId}`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || err.detail || `Upload failed with HTTP ${res.status}`);
+    }
+    return res.json();
+  },
+  getPresignedUrl: (s3Key) => request(`/evidence/presigned-url?s3_key=${encodeURIComponent(s3Key)}`),
   getAuditHistory: (id) => request(`/incidents/${id}/audit`),
   chatAgent: (payload) => request('/agent/chat', { method: 'POST', body: JSON.stringify(payload) }),
   getAgentTools: () => request('/agent/tools'),
 };
+

@@ -117,3 +117,137 @@ def test_full_api_workflow_end_to_end(client):
     stats = stats_resp.json()
     assert stats["total_incidents"] >= 1
     assert stats["verified"] >= 1
+
+def test_api_gateway_stage_docs_and_root_routing(client):
+    # Test root endpoint returns operational info and docs links
+    root_resp = client.get("/")
+    assert root_resp.status_code == 200
+    root_data = root_resp.json()
+    assert root_data["system"] == "Monsoon Sentinel"
+    assert "docs_url" in root_data
+    assert "openapi_url" in root_data
+
+    # Test OpenAPI schema endpoint returns HTTP 200 and includes incident routes
+    openapi_resp = client.get("/openapi.json")
+    assert openapi_resp.status_code == 200
+    openapi_spec = openapi_resp.json()
+    assert "paths" in openapi_spec
+    assert "/api/v1/incidents" in openapi_spec["paths"]
+
+    # Test Swagger UI docs endpoint returns HTTP 200
+    docs_resp = client.get("/docs")
+    assert docs_resp.status_code == 200
+
+def test_agent_structured_response_and_authoritative_state(client):
+    # Create incident
+    payload = {
+        "reporter_name": "Kavita Rao",
+        "reporter_phone": "+91-99000-11223",
+        "ward_id": "WARD-07",
+        "ward_name": "South Lakeside & Riverfront Drainage Basin",
+        "latitude": 12.9352,
+        "longitude": 77.6245,
+        "drain_blockage_level": "SEVERE",
+        "water_depth_cm": 35.0,
+        "description": "Lakeside culvert inlet heavily choked with tree limbs.",
+        "landmark": "Near Lake Gate"
+    }
+    create_resp = client.post("/api/v1/incidents", json=payload)
+    inc_id = create_resp.json()["id"]
+
+    # 1. Test conversational chat endpoint returns structured fields
+    chat_resp = client.post("/api/v1/agent/chat", json={
+        "message": f"What is the status of {inc_id}?",
+        "incident_id": inc_id
+    })
+    assert chat_resp.status_code == 200
+    chat_data = chat_resp.json()
+    assert "response" in chat_data
+    assert chat_data["incident_id"] == inc_id
+    assert chat_data["incident_status"] == "NEW"
+    assert "reasoning_summary" in chat_data
+    assert "actions_taken" in chat_data
+    assert "next_steps" in chat_data
+    # Ensure no internal mock/SDK strings leaked into response text
+    assert "running on local Strands Agents SDK" not in chat_data["response"]
+    assert "thought_process" not in chat_data
+
+    # 2. Test triage endpoint returns structured professional format
+    triage_resp = client.post(f"/api/v1/incidents/{inc_id}/triage")
+    assert triage_resp.status_code == 200
+    triage_data = triage_resp.json()
+    assert triage_data["incident_id"] == inc_id
+    assert triage_data["incident_status"] == "AWAITING_APPROVAL"
+    assert triage_data["risk_score"] > 0
+    assert triage_data["severity"] in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+    assert len(triage_data["actions_taken"]) >= 4
+    assert len(triage_data["next_steps"]) >= 1
+    assert "debug" in triage_data
+
+def test_human_review_supervisor_actions(client):
+    # 1. Create and advance an incident to RESOLVED
+    payload = {
+        "reporter_name": "Rohan Deshmukh",
+        "reporter_phone": "+91-98333-44556",
+        "ward_id": "WARD-BOM-01",
+        "ward_name": "Mumbai - Hindmata Cinema & Dadar TT Pumping Station",
+        "latitude": 19.0178,
+        "longitude": 72.8478,
+        "drain_blockage_level": "COMPLETE",
+        "water_depth_cm": 50.0,
+        "description": "Hindmata flyover underpass flooding.",
+        "landmark": "Dadar TT Circle"
+    }
+    create_resp = client.post("/api/v1/incidents", json=payload)
+    inc_id = create_resp.json()["id"]
+
+    client.post(f"/api/v1/incidents/{inc_id}/analyze")
+    client.post(f"/api/v1/incidents/{inc_id}/prioritize")
+    client.post(f"/api/v1/incidents/{inc_id}/recommend")
+    client.post(f"/api/v1/incidents/{inc_id}/approval", json={
+        "approved": True,
+        "reviewer": "Chief_Dispatcher_Kapoor",
+        "rationale": "Urgent dewatering needed."
+    })
+    client.post(f"/api/v1/incidents/{inc_id}/tasks")
+    client.post(f"/api/v1/incidents/{inc_id}/resolve", json={
+        "resolution_notes": "Silt cleared by suction truck.",
+        "evidence_url": "s3://project-evidence-a7k29x/test.jpg"
+    })
+
+    # 2. Trigger failed verification -> transitions to NEEDS_HUMAN_REVIEW
+    verify_resp = client.post(f"/api/v1/incidents/{inc_id}/verify", json={
+        "sensor_flow_rate_lps": 12.0,
+        "post_clearance_depth_cm": 15.0,
+        "simulate_failure": True
+    })
+    assert verify_resp.status_code == 200
+    assert verify_resp.json()["status"] == "NEEDS_HUMAN_REVIEW"
+
+    # 3. Test Redispatch endpoint -> moves back to IN_PROGRESS
+    redispatch_resp = client.post(f"/api/v1/incidents/{inc_id}/redispatch", json={
+        "reason": "Water depth still 15cm; desilt second culvert intake.",
+        "reviewer": "Supervisor_Kapoor"
+    })
+    assert redispatch_resp.status_code == 200
+    assert redispatch_resp.json()["status"] == "IN_PROGRESS"
+
+    # Re-resolve and re-fail to test override verify
+    client.post(f"/api/v1/incidents/{inc_id}/resolve", json={
+        "resolution_notes": "Secondary desilting complete."
+    })
+    client.post(f"/api/v1/incidents/{inc_id}/verify", json={
+        "sensor_flow_rate_lps": 12.0,
+        "post_clearance_depth_cm": 6.0,
+        "simulate_failure": True
+    })
+
+    # 4. Test Override Verify endpoint -> moves to VERIFIED
+    override_resp = client.post(f"/api/v1/incidents/{inc_id}/override-verify", json={
+        "reviewer": "Chief_Engineer_Rao",
+        "rationale": "Manual visual inspection confirmed storm drain clear; sensor is calibrated."
+    })
+    assert override_resp.status_code == 200
+    assert override_resp.json()["status"] == "VERIFIED"
+    assert override_resp.json()["verification"]["verified"] is True
+

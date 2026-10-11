@@ -1,5 +1,5 @@
 # Monsoon Sentinel — AI-Assisted Urban Waterlogging Risk & Response System
-**Phase 1: Local MVP (Ship It Track)**
+**Phase 2: AWS Persistence (Amazon DynamoDB & Amazon S3)**
 
 ---
 
@@ -7,23 +7,25 @@
 
 **Monsoon Sentinel** is an AI-assisted urban disaster response and flood risk mitigation system designed for municipal municipal corporations. During heavy monsoon events, rapid surface runoff, clogged storm culverts, and delayed dispatch lead to severe urban waterlogging, transit paralyzation, and property loss.
 
-Monsoon Sentinel provides:
-1. **Intake & Spatial Correlation**: Citizen-reported drain blockages combined with real-time rain gauge telemetry, drainage capacity models, and historical waterlogging hotspots.
-2. **Deterministic Risk Engine**: Mathematical, explainable risk scoring ($R \in [0, 100]$) and urgency prioritization. AI models **never invent sensor measurements or determine risk scores directly**.
-3. **Strands Agent Orchestration**: Autonomous triage calling 12 narrowly scoped tools to evaluate risk, prioritize incidents, and formulate operational equipment recommendations.
-4. **Human-in-the-Loop Authorization**: Dedicated supervisor approval queue preventing accidental dispatches or hallucinated field actions. Dispatches strictly state that physical drain clearance has *not* occurred yet.
-5. **Resolution Verification & Auditability**: Telemetry-driven drainage validation (LPS flow rate and residual water depth) with immutable audit history tracking actor, action, timestamp, and rationale.
+### Phase 2 AWS Persistence Highlights
+- **Pluggable Persistence**: Switch between **SQLite/JSON** (local default) and **Amazon DynamoDB** via `STORAGE_BACKEND="sqlite" | "dynamodb"`.
+- **Atomic Concurrency & Idempotency**: DynamoDB conditional writes enforce valid state transitions (`#status = :expected_status`) and prevent duplicate response task dispatches directly at the database engine level.
+- **Private Amazon S3 Storage**: Photographic evidence and municipal flood datasets are stored privately in encrypted S3 buckets with Public Access Block enabled. Access is granted exclusively through short-lived presigned URLs.
+- **Infrastructure as Code**: AWS SAM template ([`template.yaml`](template.yaml)) defining the DynamoDB table with GSI and S3 private bucket.
 
 ---
 
 ## Technology Stack
 
-- **Backend**: Python 3.14+, FastAPI, Uvicorn, Pydantic v2
+- **Backend**: Python 3.14+, FastAPI, Uvicorn, Pydantic v2, Boto3, Moto
 - **Agent Orchestration**: **Strands Agents SDK** (`strands-agents 1.54.0`)
 - **Model Inference**: **Amazon SageMaker AI** (abstracted behind `SageMakerInferenceAdapter`, running in local mock mode without requiring AWS credentials or cloud billing)
-- **Local Persistence**: SQLite JSON repository behind `IncidentRepositoryBase` (architected for 1-to-1 replacement with **Amazon DynamoDB** in Phase 2)
+- **Database & Storage**:
+  - **Amazon DynamoDB**: Table `monsoon-sentinel-incidents` with partition key `incident_id` and GSI `StatusIndex`.
+  - **Amazon S3**: Private bucket `monsoon-sentinel-evidence` with AES256 server-side encryption and Block Public Access.
+  - **SQLite / JSON**: Local fallback repository implementing identical `IncidentRepositoryBase` contract.
 - **Frontend**: React 19, Vite, Tailwind CSS, Lucide Icons, SVG/GIS Hydrological Grid
-- **Testing**: Deterministic `pytest` unit test suite and end-to-end API integration tests
+- **Testing**: Deterministic `pytest` unit test suite (30 passing tests) with `moto` local AWS emulation.
 
 ---
 
@@ -38,94 +40,160 @@ Monsoon Sentinel provides:
                                                             │
                                                   [10. Telemetry Verification]
                                                             │
-                                                  [Audit History Stored]
+                                                  [DynamoDB & S3 Persistence]
 ```
 
 1. **Citizen Report**: A citizen submits a waterlogging or drain blockage report with GPS coordinates, ward, water depth, and blockage level.
-2. **Validation & Storage**: The system validates input schemas and stores the incident in `NEW` status.
+2. **Validation & Storage**: The system validates input schemas and stores the incident in `NEW` status in DynamoDB or SQLite.
 3. **Environmental Telemetry**: Rainfall radar, storm culvert capacity, historical flood records, and nearby incident density are retrieved.
 4. **Deterministic Risk Calculation**: The Python risk engine computes an explainable risk score ($R \in [0, 100]$) and severity tier (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`). Missing data is flagged with an explicit uncertainty penalty.
 5. **Urgency Prioritization**: The prioritization service scores and ranks active incidents based on depth, blockage severity, and report age.
 6. **Agent Recommendation**: The Strands agent calls explicit tools to recommend required machinery (e.g. Super-Sucker Hydro-Vacuum rig, Mobile Dewatering pumps, or Desilting crews).
 7. **Human Supervisor Review**: A municipal dispatcher approves or rejects the recommendation in the Human Approval Queue.
-8. **Response Task Dispatch**: Approval dispatches a response task (`IN_PROGRESS`). Idempotency guards prevent duplicate dispatch orders. Dispatches explicitly state physical drain clearance is ongoing.
-9. **Resolution Update**: Field teams record completed clearance notes and photographic evidence (`RESOLVED`).
+8. **Response Task Dispatch**: Approval dispatches a response task (`IN_PROGRESS`). Database-level conditional writes strictly prevent duplicate dispatch orders. Dispatches explicitly state physical drain clearance is ongoing.
+9. **Resolution Update**: Field teams record completed clearance notes and photographic evidence uploaded to private S3 bucket (`RESOLVED`).
 10. **Telemetry Verification**: Culvert flow rate ($> 20\text{ LPS}$) and residual depth ($< 5\text{ cm}$) are verified. Successful checks transition to `VERIFIED`; failed checks transition to `NEEDS_HUMAN_REVIEW`.
 
 ---
 
-## The 12 Strands Agent Tools
+## Configuration & Environment Variables
 
-Located in [`backend/app/agent/tools.py`](backend/app/agent/tools.py):
-1. `get_rainfall_forecast(latitude, longitude, ward_id)`: Fetches radar intensity and 2-hour forecast.
-2. `get_historical_waterlogging(ward_id, location_id)`: Checks ward flood history and hotspot status.
-3. `get_nearby_incidents(latitude, longitude, radius_km)`: Identifies active reports within 2 km.
-4. `get_drainage_status(ward_id, drain_id)`: Retrieves conduit capacity and structural status.
-5. `calculate_waterlogging_risk(incident_id)`: Invokes deterministic mathematical scoring.
-6. `prioritize_incident(incident_id)`: Evaluates urgency score and queue ranking.
-7. `recommend_response(incident_id)`: Generates equipment and task plan.
-8. `request_human_approval(incident_id, reason)`: Queues plan for supervisor review.
-9. `create_response_task(incident_id, action_type, assigned_unit, priority)`: Dispatches task (idempotent).
-10. `record_resolution(incident_id, resolution_notes, evidence_url)`: Logs field clearance.
-11. `verify_resolution(incident_id, sensor_flow_rate_lps, post_clearance_depth_cm)`: Verifies telemetry.
-12. `get_incident_status(incident_id)`: Reads complete lifecycle state and audit records.
+Configure application behavior using environment variables (never commit credentials or `.env` secrets):
+
+| Variable | Default | Description |
+|---|---|---|
+| `STORAGE_BACKEND` | `sqlite` | Persistence backend: `sqlite` for local development, `dynamodb` for AWS persistence |
+| `DYNAMODB_TABLE_NAME` | `monsoon-sentinel-incidents` | DynamoDB table name |
+| `DYNAMODB_ENDPOINT_URL` | *(None)* | Optional custom endpoint URL (for DynamoDB Local emulator) |
+| `S3_BUCKET_NAME` | `monsoon-sentinel-evidence` | S3 private bucket name for evidence and datasets |
+| `S3_ENDPOINT_URL` | *(None)* | Optional custom endpoint URL (for MinIO or S3 local emulator) |
+| `AWS_REGION` | `ap-south-1` | Target AWS region (e.g. `ap-south-1`, `us-east-1`) |
+| `USE_MOCK_SAGEMAKER` | `true` | Mock adapter toggle (`true` avoids cloud billing during development) |
+| `SAGEMAKER_ENDPOINT_NAME` | `mock-monsoon-sagemaker-endpoint` | SageMaker AI endpoint name |
 
 ---
 
-## Quickstart & Local Setup
+## Required IAM Permissions
 
-### 1. Backend Setup & Test Execution
+For security, the application adheres to the principle of least privilege. Do not use `AdministratorAccess`.
+
+### 1. Application Execution Role Policy
+Attach this policy to the Lambda execution role or ECS task role running Monsoon Sentinel:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DynamoDBIncidentsAccess",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+        "dynamodb:Scan"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:*:*:table/monsoon-sentinel-incidents",
+        "arn:aws:dynamodb:*:*:table/monsoon-sentinel-incidents/index/*"
+      ]
+    },
+    {
+      "Sid": "S3EvidencePrivateAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:HeadBucket",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::monsoon-sentinel-evidence*",
+        "arn:aws:s3:::monsoon-sentinel-evidence*/*"
+      ]
+    }
+  ]
+}
+```
+
+### 2. Developer / Deployment Identity Policy (SAM / CloudFormation)
+The developer identity executing SAM deployments requires permissions to manage CloudFormation stacks, DynamoDB tables, and S3 buckets:
+- `cloudformation:*` on stack `monsoon-sentinel-*`
+- `dynamodb:CreateTable`, `dynamodb:DescribeTable`, `dynamodb:UpdateTable`, `dynamodb:DeleteTable`, `dynamodb:TagResource`
+- `s3:CreateBucket`, `s3:PutBucketPublicAccessBlock`, `s3:PutBucketEncryption`, `s3:PutBucketVersioning`, `s3:PutLifecycleConfiguration`, `s3:DeleteBucket`
+
+---
+
+## AWS SAM Infrastructure Deployment
+
+The infrastructure is defined in [`template.yaml`](template.yaml).
+
+### Build & Deploy with AWS SAM:
+```bash
+# 1. Build the SAM template
+sam build
+
+# 2. Deploy infrastructure interactively (guided)
+sam deploy --guided \
+  --stack-name monsoon-sentinel-infra \
+  --region ap-south-1 \
+  --parameter-overrides Environment=dev DynamoDBTableName=monsoon-sentinel-incidents EvidenceBucketPrefix=monsoon-sentinel-evidence
+```
+
+### Infrastructure Cleanup (Teardown):
+To delete the deployed resources and avoid cloud billing:
+```bash
+# Delete SAM stack
+sam delete --stack-name monsoon-sentinel-infra --region ap-south-1
+```
+
+---
+
+## Automated Test Execution
+
+All tests run locally using `moto` AWS emulation and SQLite. No live AWS credentials or cloud costs are incurred.
 
 ```bash
-# Clone and enter workspace
-cd monsoon-sentinel
-
-# Run automated test suite
+# Run the complete test suite (30 passing tests)
 python -m pytest -v
 ```
 
-All 13 deterministic tests will run:
-- `test_risk_engine.py`: Normalization formulas, weights, missing data uncertainty penalty.
-- `test_prioritization.py`: Urgency score, multi-incident rank ordering.
-- `test_lifecycle.py`: State transitions, rejection branch, invalid transition guards.
-- `test_idempotency.py`: Prevention of duplicate response task dispatches.
-- `test_verification.py`: Telemetry verification (`VERIFIED` vs `NEEDS_HUMAN_REVIEW`).
-- `test_api_workflow.py`: Complete 10-step end-to-end API integration test.
+### Test Coverage Breakdown:
+- `test_repository_contract.py`: Parametrized contract test asserting identical semantics and query behavior across both SQLite and DynamoDB implementations.
+- `test_dynamodb_repository.py`: Tests DynamoDB storage, conditional transitions, duplicate task dispatch prevention, and persistence across simulated application restarts.
+- `test_s3_storage.py`: Tests S3 private bucket creation, Block Public Access, AES256 encryption, file type validation (accepts PNG/JPG/PDF, rejects scripts), 5MB size limit, and presigned URLs.
+- `test_aws_workflow.py`: End-to-end 10-step municipal flood workflow test backed entirely by DynamoDB and S3.
+- `test_risk_engine.py`: Deterministic scoring formulas and missing data uncertainty penalties.
+- `test_prioritization.py`: Urgency ranking across multi-incident queues.
+- `test_lifecycle.py`: State machine progression and illegal transition guards.
+- `test_idempotency.py`: Task dispatch idempotency guards.
+- `test_verification.py`: Telemetry verification outcomes (`VERIFIED` vs `NEEDS_HUMAN_REVIEW`).
+- `test_api_workflow.py`: Full FastAPI integration test.
 
-### 2. Start the Backend Server
+---
 
-```bash
+## Running the Application Locally
+
+### Step 1: Start Backend (Terminal 1)
+```powershell
 cd backend
 python -m uvicorn app.api.main:app --port 8000 --reload
 ```
-- API Documentation (Swagger UI): `http://localhost:8000/docs`
+To run backend with DynamoDB (connecting to local DynamoDB or AWS):
+```powershell
+set STORAGE_BACKEND=dynamodb
+set DYNAMODB_TABLE_NAME=monsoon-sentinel-incidents
+python -m uvicorn app.api.main:app --port 8000 --reload
+```
+
+- API Documentation: `http://localhost:8000/docs`
 - Health check: `http://localhost:8000/`
 
-### 3. Start the Frontend Dashboard
-
-In a second terminal window:
-```bash
+### Step 2: Start Frontend (Terminal 2)
+```powershell
 cd frontend
-npm install
 npm run dev
 ```
-Open your browser at `http://localhost:5173`.
-
----
-
-## Seed Data & Inspection
-
-The local MVP automatically pre-seeds the SQLite database on startup with 4 realistic municipal incidents across urban wards:
-1. **INC-1 (Ward 12 - Central Metro)**: Complete drain blockage near metro underpass; pre-loaded in `AWAITING_APPROVAL`.
-2. **INC-2 (Ward 07 - South Lakeside Basin)**: Severe culvert overflow near hospital corridor; pre-approved by supervisor and `IN_PROGRESS`.
-3. **INC-3 (Ward 04 - North Industrial Estate)**: Partial silt blockage; in `ANALYZING`.
-4. **INC-4 (Ward 19 - Eastern Hills Heights)**: Clear drain with downhill cloudburst runoff; brand `NEW`.
-
----
-
-## Architectural Guardrails
-
-- **Zero Cloud Costs / No Hardcoded AWS Credentials**: Runs completely offline using `SageMakerInferenceAdapter` mock mode.
-- **Repository Abstraction**: All storage interactions use `IncidentRepositoryBase`, facilitating seamless transition to AWS DynamoDB in Phase 2.
-- **Derived Dashboard Metrics**: All statistics (counts, severities, average depth) are dynamically computed from application state; never hardcoded.
-- **Human In The Loop**: Physical response tasks cannot be executed without supervisor authorization.
+Open `http://localhost:5173` in your browser.

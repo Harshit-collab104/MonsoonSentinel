@@ -13,11 +13,42 @@ from app.db.dynamodb_repository import DynamoDbIncidentRepository
 def dynamodb_env():
     with mock_aws():
         repo = DynamoDbIncidentRepository(
-            table_name="monsoon-sentinel-incidents",
+            table_name="ProjectTable",
             region_name="ap-south-1"
         )
         repo._ensure_table_exists()
         yield repo
+
+def test_dynamodb_key_schema_and_item_structure(dynamodb_env):
+    repo = dynamodb_env
+    # Verify table key schema has pk (HASH) and sk (RANGE)
+    table_desc = repo._table.meta.client.describe_table(TableName="ProjectTable")
+    key_schema = {k["AttributeName"]: k["KeyType"] for k in table_desc["Table"]["KeySchema"]}
+    assert key_schema.get("pk") == "HASH"
+    assert key_schema.get("sk") == "RANGE"
+
+    report = CitizenReportCreate(
+        reporter_name="Schema Tester",
+        reporter_phone="+91-98765-00000",
+        ward_id="WARD-12",
+        ward_name="Central Metro",
+        latitude=12.9716,
+        longitude=77.5946,
+        drain_blockage_level=BlockageSeverity.SEVERE,
+        water_depth_cm=25.0,
+        description="Drain blocked at junction"
+    )
+    inc = Incident(id="INC-SCHEMA-01", report=report, status=IncidentStatus.NEW)
+    repo.save(inc)
+
+    # Directly inspect raw DynamoDB item
+    raw = repo._table.get_item(Key={"pk": "INCIDENT#INC-SCHEMA-01", "sk": "METADATA"})
+    assert "Item" in raw
+    item = raw["Item"]
+    assert item["pk"] == "INCIDENT#INC-SCHEMA-01"
+    assert item["sk"] == "METADATA"
+    assert item["incident_id"] == "INC-SCHEMA-01"
+    assert item["status"] == "NEW"
 
 def test_dynamodb_full_incident_persistence(dynamodb_env):
     repo = dynamodb_env
@@ -89,7 +120,7 @@ def test_dynamodb_persistence_across_restarts(dynamodb_env):
 
     # Simulate restart by creating repo2 pointing to same DynamoDB table
     repo2 = DynamoDbIncidentRepository(
-        table_name="monsoon-sentinel-incidents",
+        table_name="ProjectTable",
         region_name="ap-south-1"
     )
 

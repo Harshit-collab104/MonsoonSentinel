@@ -1,123 +1,143 @@
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: >
-  Monsoon Sentinel - Phase 2 AWS Persistence Infrastructure
-  Defines Amazon DynamoDB Table with StatusIndex GSI and Amazon S3 Private Evidence Bucket.
+Description: Monsoon Sentinel - Lambda API using existing DynamoDB and S3 resources
 
 Parameters:
   Environment:
     Type: String
     Default: dev
-    AllowedValues: [dev, staging, prod]
-    Description: Deployment target environment tier.
+    AllowedValues:
+      - dev
+      - staging
+      - prod
 
   DynamoDBTableName:
     Type: String
-    Default: monsoon-sentinel-incidents
-    Description: DynamoDB table name for urban waterlogging incidents.
-
-  EvidenceBucketPrefix:
-    Type: String
-    Default: monsoon-sentinel-evidence
-    Description: Prefix for private S3 bucket storing photographic evidence and municipal flood datasets.
-
-Resources:
-  # ============================================================================
-  # 1. DynamoDB Table for Monsoon Sentinel Incidents
-  # ============================================================================
-  IncidentsTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      TableName: !Ref DynamoDBTableName
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - AttributeName: incident_id
-          AttributeType: S
-        - AttributeName: status
-          AttributeType: S
-        - AttributeName: created_at
-          AttributeType: S
-      KeySchema:
-        - AttributeName: incident_id
-          KeyType: HASH
-      GlobalSecondaryIndexes:
-        - IndexName: StatusIndex
-          KeySchema:
-            - AttributeName: status
-              KeyType: HASH
-            - AttributeName: created_at
-              KeyType: RANGE
-          Projection:
-            ProjectionType: ALL
-      PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: true
-      SSESpecification:
-        SSEEnabled: true
-      Tags:
-        - Key: Project
-          Value: MonsoonSentinel
-        - Key: Environment
-          Value: !Ref Environment
-
-  # ============================================================================
-  # 2. Private S3 Bucket for Evidence & Municipal Datasets
-  # ============================================================================
-  EvidenceBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub "${EvidenceBucketPrefix}-${AWS::AccountId}-${AWS::Region}"
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        IgnorePublicAcls: true
-        BlockPublicPolicy: true
-        RestrictPublicBuckets: true
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      VersioningConfiguration:
-        Status: Enabled
-      LifecycleConfiguration:
-        Rules:
-          - Id: AbortIncompleteMultipartUploads
-            Status: Enabled
-            AbortIncompleteMultipartUpload:
-              DaysAfterInitiation: 7
-          - Id: ExpireOldEvidenceVersions
-            Status: Enabled
-            NoncurrentVersionExpiration:
-              NoncurrentDays: 30
-      Tags:
-        - Key: Project
-          Value: MonsoonSentinel
-        - Key: Environment
-          Value: !Ref Environment
-
-Outputs:
-  IncidentsTableName:
-    Description: Name of the DynamoDB Incidents Table
-    Value: !Ref IncidentsTable
-    Export:
-      Name: !Sub "${AWS::StackName}-IncidentsTableName"
-
-  IncidentsTableArn:
-    Description: ARN of the DynamoDB Incidents Table
-    Value: !GetAtt IncidentsTable.Arn
-    Export:
-      Name: !Sub "${AWS::StackName}-IncidentsTableArn"
+    Default: ProjectTable
 
   EvidenceBucketName:
-    Description: Name of the S3 Evidence & Datasets Bucket
-    Value: !Ref EvidenceBucket
-    Export:
-      Name: !Sub "${AWS::StackName}-EvidenceBucketName"
+    Type: String
+    Default: project-evidence-a7k29x
 
-  EvidenceBucketArn:
-    Description: ARN of the S3 Evidence Bucket
-    Value: !GetAtt EvidenceBucket.Arn
-    Export:
-      Name: !Sub "${AWS::StackName}-EvidenceBucketArn"
+  LambdaRoleName:
+    Type: String
+    Default: lambdaRole
 
-  Region:
-    Description: Deployed AWS Region
-    Value: !Ref AWS::Region
+  SageMakerEndpointName:
+    Type: String
+    Default: ""
+
+Resources:
+  # Attach application permissions to the existing Lambda execution role.
+  RuntimeAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: MonsoonSentinelRuntimeAccess
+      Roles:
+        - !Ref LambdaRoleName
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: IncidentTableAccess
+            Effect: Allow
+            Action:
+              - dynamodb:DescribeTable
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:DeleteItem
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:BatchGetItem
+              - dynamodb:BatchWriteItem
+            Resource:
+              - !Sub "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoDBTableName}"
+              - !Sub "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoDBTableName}/index/*"
+
+          - Sid: EvidenceBucketListing
+            Effect: Allow
+            Action:
+              - s3:ListBucket
+              - s3:GetBucketLocation
+            Resource:
+              - !Sub "arn:${AWS::Partition}:s3:::${EvidenceBucketName}"
+
+          - Sid: EvidenceObjectAccess
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+            Resource:
+              - !Sub "arn:${AWS::Partition}:s3:::${EvidenceBucketName}/*"
+
+          - Sid: SageMakerEndpointInvocation
+            Effect: Allow
+            Action:
+              - sagemaker:InvokeEndpoint
+            Resource:
+              - !Sub "arn:${AWS::Partition}:sagemaker:${AWS::Region}:${AWS::AccountId}:endpoint/*"
+
+  # API Gateway REST API.
+  SentinelApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      EndpointConfiguration: REGIONAL
+
+  # FastAPI application adapted through Mangum.
+  SentinelFunction:
+    Type: AWS::Serverless::Function
+    DependsOn:
+      - RuntimeAccessPolicy
+    Properties:
+      FunctionName: monsoon-sentinel-api
+      CodeUri: backend/
+      Handler: app.api.main.handler
+      Runtime: python3.12
+      Architectures:
+        - x86_64
+      MemorySize: 512
+      Timeout: 30
+      Role: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${LambdaRoleName}"
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          STORAGE_BACKEND: dynamodb
+          DYNAMODB_TABLE_NAME: !Ref DynamoDBTableName
+          EVIDENCE_BUCKET: !Ref EvidenceBucketName
+          S3_BUCKET_NAME: !Ref EvidenceBucketName
+          USE_MOCK_SAGEMAKER: "true"
+          SAGEMAKER_ENDPOINT_NAME: !Ref SageMakerEndpointName
+
+      Events:
+        RootApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SentinelApi
+            Path: /
+            Method: ANY
+
+        ProxyApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SentinelApi
+            Path: /{proxy+}
+            Method: ANY
+
+Outputs:
+  ApiUrl:
+    Description: Monsoon Sentinel API endpoint
+    Value: !Sub "https://${SentinelApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/Prod/"
+
+  LambdaFunctionName:
+    Description: Lambda function name
+    Value: !Ref SentinelFunction
+
+  DynamoDBTableName:
+    Description: Existing DynamoDB table used by the API
+    Value: !Ref DynamoDBTableName
+
+  EvidenceBucketName:
+    Description: Existing private evidence bucket
+    Value: !Ref EvidenceBucketName

@@ -45,29 +45,23 @@ class DynamoDbIncidentRepository(IncidentRepositoryBase):
         self._table = self._dynamodb.Table(self.table_name)
 
     def _ensure_table_exists(self):
-        """Helper to create table schema if running in local emulator or mock environment."""
+        """Helper to create table schema if running in local emulator or mock environment.
+        Compatible with existing ProjectTable schema: partition key 'pk', sort key 'sk'.
+        """
         try:
             self._table.load()
         except ClientError as e:
             if e.response["Error"]["Code"] in ["ResourceNotFoundException", "404"]:
-                # Create table with GSI
+                # Create table with pk (HASH) and sk (RANGE)
                 self._dynamodb.create_table(
                     TableName=self.table_name,
-                    KeySchema=[{"AttributeName": "incident_id", "KeyType": "HASH"}],
-                    AttributeDefinitions=[
-                        {"AttributeName": "incident_id", "AttributeType": "S"},
-                        {"AttributeName": "status", "AttributeType": "S"},
-                        {"AttributeName": "created_at", "AttributeType": "S"}
+                    KeySchema=[
+                        {"AttributeName": "pk", "KeyType": "HASH"},
+                        {"AttributeName": "sk", "KeyType": "RANGE"}
                     ],
-                    GlobalSecondaryIndexes=[
-                        {
-                            "IndexName": "StatusIndex",
-                            "KeySchema": [
-                                {"AttributeName": "status", "KeyType": "HASH"},
-                                {"AttributeName": "created_at", "KeyType": "RANGE"}
-                            ],
-                            "Projection": {"ProjectionType": "ALL"}
-                        }
+                    AttributeDefinitions=[
+                        {"AttributeName": "pk", "AttributeType": "S"},
+                        {"AttributeName": "sk", "AttributeType": "S"}
                     ],
                     BillingMode="PAY_PER_REQUEST"
                 )
@@ -75,9 +69,15 @@ class DynamoDbIncidentRepository(IncidentRepositoryBase):
             else:
                 raise
 
+    def _make_key(self, incident_id: str) -> dict:
+        return {
+            "pk": f"INCIDENT#{incident_id}",
+            "sk": "METADATA"
+        }
+
     def get(self, incident_id: str) -> Optional[Incident]:
         try:
-            response = self._table.get_item(Key={"incident_id": incident_id})
+            response = self._table.get_item(Key=self._make_key(incident_id))
             item = response.get("Item")
             if item and "data_json" in item:
                 return Incident.model_validate_json(item["data_json"])
@@ -93,7 +93,10 @@ class DynamoDbIncidentRepository(IncidentRepositoryBase):
             while True:
                 response = self._table.scan(**scan_kwargs)
                 for item in response.get("Items", []):
-                    if "data_json" in item:
+                    # Filter for incident records (pk begins with INCIDENT# and sk == METADATA)
+                    pk = item.get("pk", "")
+                    sk = item.get("sk", "")
+                    if (pk.startswith("INCIDENT#") or item.get("incident_id")) and "data_json" in item:
                         incidents.append(Incident.model_validate_json(item["data_json"]))
                 
                 last_key = response.get("LastEvaluatedKey")
@@ -109,7 +112,10 @@ class DynamoDbIncidentRepository(IncidentRepositoryBase):
             raise
 
     def _build_item(self, incident: Incident) -> dict:
+        key = self._make_key(incident.id)
         return {
+            "pk": key["pk"],
+            "sk": key["sk"],
             "incident_id": incident.id,
             "status": incident.status.value,
             "ward_id": incident.report.ward_id,
@@ -130,13 +136,13 @@ class DynamoDbIncidentRepository(IncidentRepositoryBase):
 
     def save_transition(self, incident: Incident, expected_current_status: IncidentStatus) -> Incident:
         """Atomically persist state transition with conditional write ensuring
-        attribute_exists(incident_id) AND #st = :expected_st.
+        attribute_exists(pk) AND #st = :expected_st.
         """
         item = self._build_item(incident)
         try:
             self._table.put_item(
                 Item=item,
-                ConditionExpression="attribute_exists(incident_id) AND #st = :expected_st",
+                ConditionExpression="attribute_exists(pk) AND #st = :expected_st",
                 ExpressionAttributeNames={"#st": "status"},
                 ExpressionAttributeValues={":expected_st": expected_current_status.value}
             )
@@ -155,13 +161,13 @@ class DynamoDbIncidentRepository(IncidentRepositoryBase):
 
     def save_task_dispatch(self, incident: Incident) -> Incident:
         """Atomically persist response task dispatch ensuring
-        attribute_exists(incident_id) AND #has_task = :false_val.
+        attribute_exists(pk) AND (#has_task = :false_val OR attribute_not_exists(has_active_task)).
         """
         item = self._build_item(incident)
         try:
             self._table.put_item(
                 Item=item,
-                ConditionExpression="attribute_exists(incident_id) AND (#has_task = :false_val OR attribute_not_exists(has_active_task))",
+                ConditionExpression="attribute_exists(pk) AND (#has_task = :false_val OR attribute_not_exists(has_active_task))",
                 ExpressionAttributeNames={"#has_task": "has_active_task"},
                 ExpressionAttributeValues={":false_val": False}
             )
@@ -177,7 +183,7 @@ class DynamoDbIncidentRepository(IncidentRepositoryBase):
 
     def delete(self, incident_id: str) -> bool:
         try:
-            self._table.delete_item(Key={"incident_id": incident_id})
+            self._table.delete_item(Key=self._make_key(incident_id))
             return True
         except ClientError as e:
             logger.error(f"DynamoDB delete_item error for {incident_id}: {e}")

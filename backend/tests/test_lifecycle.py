@@ -1,11 +1,13 @@
-import pytest
-import tempfile
 import os
-from app.db.sqlite_repository import SqliteIncidentRepository
-from app.services.incident_service import IncidentService
-from app.models.incident import CitizenReportCreate
-from app.core.enums import IncidentStatus, BlockageSeverity
+import tempfile
+
+import pytest
+from app.core.enums import BlockageSeverity, IncidentStatus
 from app.core.exceptions import InvalidStateTransitionError
+from app.db.sqlite_repository import SqliteIncidentRepository
+from app.models.incident import CitizenReportCreate
+from app.services.incident_service import IncidentService
+
 
 @pytest.fixture
 def service():
@@ -19,6 +21,7 @@ def service():
     except Exception:
         pass
 
+
 def test_full_lifecycle_progression(service):
     report = CitizenReportCreate(
         reporter_name="Civic Reporter",
@@ -28,7 +31,7 @@ def test_full_lifecycle_progression(service):
         longitude=77.5946,
         drain_blockage_level=BlockageSeverity.SEVERE,
         water_depth_cm=35.0,
-        description="Drain blocked near underpass"
+        description="Drain blocked near underpass",
     )
 
     # 1. NEW
@@ -57,20 +60,28 @@ def test_full_lifecycle_progression(service):
 
     # 6. APPROVED -> IN_PROGRESS (automatically dispatches task)
     inc = service.review_human_approval(
-        inc.id, approved=True, reviewer="Officer_Rao", rationale="Approved for emergency dewatering"
+        inc.id,
+        approved=True,
+        reviewer="Officer_Rao",
+        rationale="Approved for emergency dewatering",
     )
     assert inc.status == IncidentStatus.IN_PROGRESS
     assert inc.response_task is not None
     assert inc.response_task.status == "DISPATCHED"
 
     # 7. RESOLVED
-    inc = service.record_resolution(inc.id, resolution_notes="Debris extracted, suction pump cleared pipe.")
+    inc = service.record_resolution(
+        inc.id, resolution_notes="Debris extracted, suction pump cleared pipe."
+    )
     assert inc.status == IncidentStatus.RESOLVED
 
     # 8. VERIFIED
-    inc = service.verify_resolution(inc.id, sensor_flow_rate_lps=60.0, post_clearance_depth_cm=1.0)
+    inc = service.verify_resolution(
+        inc.id, sensor_flow_rate_lps=60.0, post_clearance_depth_cm=1.0
+    )
     assert inc.status == IncidentStatus.VERIFIED
     assert inc.verification.verified is True
+
 
 def test_rejection_branch(service):
     report = CitizenReportCreate(
@@ -80,7 +91,7 @@ def test_rejection_branch(service):
         latitude=12.9850,
         longitude=77.6680,
         drain_blockage_level=BlockageSeverity.CLEAR,
-        description="Puddle after rain"
+        description="Puddle after rain",
     )
     inc = service.create_incident(report)
     service.analyze_risk(inc.id)
@@ -90,9 +101,13 @@ def test_rejection_branch(service):
 
     # Rejection
     inc = service.review_human_approval(
-        inc.id, approved=False, reviewer="Supervisor_Mehta", rationale="Drain is already clear; natural runoff."
+        inc.id,
+        approved=False,
+        reviewer="Supervisor_Mehta",
+        rationale="Drain is already clear; natural runoff.",
     )
     assert inc.status == IncidentStatus.REJECTED
+
 
 def test_invalid_transition_rejected(service):
     report = CitizenReportCreate(
@@ -102,9 +117,11 @@ def test_invalid_transition_rejected(service):
         latitude=12.9716,
         longitude=77.5946,
         drain_blockage_level=BlockageSeverity.PARTIAL,
-        description="Drain test"
+        description="Drain test",
     )
     inc = service.create_incident(report)
     # Directly attempting to resolve NEW incident without approval must fail
     with pytest.raises(InvalidStateTransitionError):
-        service.record_resolution(inc.id, resolution_notes="Trying to resolve unapproved incident")
+        service.record_resolution(
+            inc.id, resolution_notes="Trying to resolve unapproved incident"
+        )

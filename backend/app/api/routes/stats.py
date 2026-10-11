@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from app.db.sqlite_repository import get_repository
 from app.core.enums import IncidentStatus, Severity
+from app.core.config import settings
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
@@ -63,6 +64,10 @@ def get_dashboard_statistics():
         "rejected": rejected_count,
         "severity_breakdown": severity_counts,
         "average_reported_depth_cm": avg_water_depth_cm,
-        "data_mode": "SIMULATED_LOCAL_MVP",
-        "mock_sagemaker_active": True
+        "environment": settings.ENVIRONMENT,
+        "storage_backend": settings.STORAGE_BACKEND,
+        "dynamodb_table": settings.DYNAMODB_TABLE_NAME,
+        "s3_bucket": settings.S3_BUCKET_NAME,
+        "inference_mode": "mock" if settings.USE_MOCK_SAGEMAKER else "sagemaker_endpoint",
+        "mock_sagemaker_active": settings.USE_MOCK_SAGEMAKER
     }

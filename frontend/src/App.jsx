@@ -24,8 +24,10 @@ export default function App() {
   const [stats, setStats] = useState(null);
   const [incidents, setIncidents] = useState([]);
   const [selectedIncident, setSelectedIncident] = useState(null);
-  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'map', 'approval', 'agent'
+  const [activeTab, setActiveTab] = useState('console'); // 'console', 'map', 'queue'
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [showDetailDrawer, setShowDetailDrawer] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadingAction, setLoadingAction] = useState(false);
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -36,12 +38,8 @@ export default function App() {
     {
       role: 'assistant',
       content:
-        '👋 Welcome to **Monsoon Sentinel**.\n\nI am the autonomous emergency dispatcher orchestrating municipal waterlogging response using the **Strands Agents SDK** and a local **Amazon SageMaker AI mock adapter**.\n\nSelect any incident to inspect its deterministic risk factors, request operational response equipment, or verify post-clearance culvert telemetry.',
-      thought_process: [
-        'Local Strands Agents SDK initialized with 12 explicit tools.',
-        'Deterministic Python Risk Engine active for telemetry evaluation.',
-        'SQLite repository ready for incident persistence.'
-      ]
+        'Welcome to **Monsoon Sentinel**.\n\nI am the autonomous emergency dispatcher orchestrating municipal waterlogging risk analysis and response.\n\nSelect an incident from the roster to inspect deterministic risk scores, request equipment dispatch, or verify post-clearance culvert telemetry.',
+      reasoning_summary: 'Deterministic risk engine and authoritative persistence connected.'
     }
   ]);
   const [loadingChat, setLoadingChat] = useState(false);
@@ -57,7 +55,6 @@ export default function App() {
       setIncidents(incidentsData);
 
       if (incidentsData.length > 0) {
-        // If current selection is still valid, keep it; otherwise default to first
         setSelectedIncident((prev) => {
           if (!prev) return incidentsData[0];
           const matched = incidentsData.find((i) => i.id === prev.id);
@@ -119,23 +116,23 @@ export default function App() {
     setLoadingAction(true);
     try {
       const result = await api.triageIncident(incidentId);
-      // Fetch latest state
       const updated = await api.getIncident(incidentId);
       setSelectedIncident(updated);
       await fetchData();
 
-      // Add to chat log
       setChatLog((prev) => [
         ...prev,
         {
           role: 'assistant',
-          content: result.agent_explanation || `Completed automated triage for ${incidentId}.`,
-          thought_process: [
-            `Evaluated risk score: ${result.risk_score} (${result.severity})`,
-            'Executed 5 sequential Strands Agent tools.',
-            'Plan submitted for human supervisor sign-off.'
-          ],
-          tool_traces: result.tool_traces
+          content: result.response || `Completed automated triage for ${incidentId}.`,
+          incident_id: result.incident_id,
+          incident_status: result.incident_status,
+          risk_score: result.risk_score,
+          severity: result.severity,
+          reasoning_summary: result.reasoning_summary,
+          recommendations: result.recommendations,
+          actions_taken: result.actions_taken,
+          next_steps: result.next_steps,
         }
       ]);
     } catch (err) {
@@ -201,10 +198,71 @@ export default function App() {
     }
   };
 
-  const handleCitizenSubmit = async (formData) => {
+  const handleRedispatch = async (incidentId, reason, reviewer) => {
+    setLoadingAction(true);
+    try {
+      const updated = await api.redispatchIncident(incidentId, { reason, reviewer });
+      setSelectedIncident(updated);
+      await fetchData();
+    } catch (err) {
+      alert(`Error re-dispatching crew: ${err.message}`);
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  const handleOverrideVerify = async (incidentId, reviewer, rationale) => {
+    setLoadingAction(true);
+    try {
+      const updated = await api.overrideVerifyIncident(incidentId, { reviewer, rationale });
+      setSelectedIncident(updated);
+      await fetchData();
+    } catch (err) {
+      alert(`Error overriding verification: ${err.message}`);
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  const handleCancelIncident = async (incidentId, reason, reviewer) => {
+    setLoadingAction(true);
+    try {
+      const updated = await api.cancelIncident(incidentId, { reason, reviewer });
+      setSelectedIncident(updated);
+      await fetchData();
+    } catch (err) {
+      alert(`Error closing incident: ${err.message}`);
+    } finally {
+      setLoadingAction(false);
+    }
+  };
+
+  const handleCitizenSubmit = async (formData, selectedFile) => {
     const created = await api.submitReport(formData);
+    if (selectedFile) {
+      try {
+        await api.uploadEvidence(created.id, selectedFile, false);
+      } catch (uploadErr) {
+        console.error('Evidence upload failed after creation:', uploadErr);
+      }
+    }
     await fetchData();
-    setSelectedIncident(created);
+    const refreshed = await api.getIncident(created.id);
+    setSelectedIncident(refreshed);
+  };
+
+  const handleUploadEvidence = async (incidentId, file, attachToTask = false) => {
+    setLoadingAction(true);
+    try {
+      await api.uploadEvidence(incidentId, file, attachToTask);
+      await fetchData();
+      const refreshed = await api.getIncident(incidentId);
+      setSelectedIncident(refreshed);
+    } catch (err) {
+      alert(`Error uploading evidence: ${err.message}`);
+    } finally {
+      setLoadingAction(false);
+    }
   };
 
   const handleSendMessage = async (msgText) => {
@@ -222,8 +280,14 @@ export default function App() {
         {
           role: 'assistant',
           content: res.response,
-          thought_process: res.thought_process,
-          tool_traces: res.tool_traces,
+          incident_id: res.incident_id,
+          incident_status: res.incident_status,
+          risk_score: res.risk_score,
+          severity: res.severity,
+          reasoning_summary: res.reasoning_summary,
+          recommendations: res.recommendations,
+          actions_taken: res.actions_taken,
+          next_steps: res.next_steps,
         },
       ]);
       await fetchData();
@@ -232,7 +296,7 @@ export default function App() {
         ...prev,
         {
           role: 'assistant',
-          content: `⚠️ Error executing agent tool: ${err.message}`,
+          content: `Incident Operations Notice: ${err.message}`,
         },
       ]);
     } finally {
@@ -245,7 +309,7 @@ export default function App() {
     const matchesFilter =
       statusFilter === 'ALL' ||
       (statusFilter === 'ACTIVE' && !['RESOLVED', 'VERIFIED', 'REJECTED', 'CANCELLED'].includes(i.status)) ||
-      (statusFilter === 'AWAITING_APPROVAL' && i.status === 'AWAITING_APPROVAL') ||
+      (statusFilter === 'AWAITING_APPROVAL' && (i.status === 'AWAITING_APPROVAL' || i.status === 'NEEDS_HUMAN_REVIEW')) ||
       (statusFilter === 'CRITICAL' && (i.risk_assessment?.severity === 'CRITICAL' || i.risk_assessment?.severity === 'HIGH'));
 
     const matchesSearch =
@@ -256,239 +320,282 @@ export default function App() {
     return matchesFilter && matchesSearch;
   });
 
-  const pendingApprovalIncidents = incidents.filter((i) => i.status === 'AWAITING_APPROVAL');
+  const pendingApprovalIncidents = incidents.filter(
+    (i) => i.status === 'AWAITING_APPROVAL' || i.status === 'NEEDS_HUMAN_REVIEW'
+  );
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+    <div className="h-screen w-screen bg-[#09090B] text-[#FAFAFA] flex flex-col font-sans overflow-hidden select-none">
+      {/* Minimal Header */}
       <Header
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        pendingCount={pendingApprovalIncidents.length}
         onOpenReportModal={() => setIsReportModalOpen(true)}
-        onRefresh={fetchData}
-        isRefreshing={isRefreshing}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6">
-        {/* Dynamic Statistics Bar */}
-        <DashboardOverview stats={stats} />
-
-        {/* Navigation Tabs */}
-        <div className="flex items-center gap-2 border-b border-slate-800 pb-2 overflow-x-auto text-xs">
-          <button
-            onClick={() => setActiveTab('dashboard')}
-            className={`px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 transition cursor-pointer ${
-              activeTab === 'dashboard'
-                ? 'bg-blue-600 text-white shadow'
-                : 'text-slate-400 hover:text-white hover:bg-slate-900'
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            <span>Operational Triage</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('map')}
-            className={`px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 transition cursor-pointer ${
-              activeTab === 'map'
-                ? 'bg-blue-600 text-white shadow'
-                : 'text-slate-400 hover:text-white hover:bg-slate-900'
-            }`}
-          >
-            <Map className="w-4 h-4" />
-            <span>Ward GIS Map</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('approval')}
-            className={`px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 transition relative cursor-pointer ${
-              activeTab === 'approval'
-                ? 'bg-purple-600 text-white shadow'
-                : 'text-slate-400 hover:text-white hover:bg-slate-900'
-            }`}
-          >
-            <ShieldCheck className="w-4 h-4" />
-            <span>Supervisor Queue</span>
-            {pendingApprovalIncidents.length > 0 && (
-              <span className="w-2 h-2 rounded-full bg-purple-400 animate-ping ml-1" />
-            )}
-          </button>
-
-          <button
-            onClick={() => setActiveTab('agent')}
-            className={`px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 transition cursor-pointer ${
-              activeTab === 'agent'
-                ? 'bg-purple-600 text-white shadow'
-                : 'text-slate-400 hover:text-white hover:bg-slate-900'
-            }`}
-          >
-            <Bot className="w-4 h-4" />
-            <span>Strands Agent Console</span>
-          </button>
-        </div>
-
-        {/* View Layouts */}
-        {activeTab === 'map' ? (
-          <div className="space-y-4">
-            <IncidentMap
-              incidents={incidents}
-              selectedIncident={selectedIncident}
-              onSelectIncident={(inc) => {
-                setSelectedIncident(inc);
-                setActiveTab('dashboard');
-              }}
-            />
-          </div>
-        ) : activeTab === 'approval' ? (
-          <HumanApprovalQueue
-            pendingIncidents={pendingApprovalIncidents}
-            onReview={handleHumanReview}
-            loadingAction={loadingAction}
-          />
-        ) : activeTab === 'agent' ? (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2">
-              <AgentChatConsole
-                selectedIncident={selectedIncident}
-                onSendMessage={handleSendMessage}
-                chatLog={chatLog}
-                loadingChat={loadingChat}
-              />
-            </div>
-            <div>
-              <IncidentDetailView
-                incident={selectedIncident}
-                onAnalyze={handleAnalyze}
-                onPrioritize={handlePrioritize}
-                onRecommend={handleRecommend}
-                onTriage={handleTriage}
-                onRequestApproval={handleRequestApproval}
-                onResolve={handleResolve}
-                onVerify={handleVerify}
-                loadingAction={loadingAction}
-              />
-            </div>
-          </div>
-        ) : (
-          /* Dashboard Triage Tab (Split View) */
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Left Column: Incidents Filterable List (4 cols) */}
-            <div className="lg:col-span-5 space-y-4">
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Droplets className="w-4 h-4 text-blue-400" />
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">
-                      Reported Incidents ({filteredIncidents.length})
-                    </h3>
-                  </div>
-                  <span className="text-[11px] text-slate-400">Click to inspect</span>
+      {/* Main Viewport Container */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* VIEW 1: CONSOLE MODE (Default Linear Chat + Ultra-thin 240px Sidebar) */}
+        {activeTab === 'console' && (
+          <div className="flex-1 flex overflow-hidden">
+            {/* Ultra-thin 240px Collapsible Sidebar */}
+            <aside
+              className={`${
+                isSidebarOpen ? 'w-60' : 'w-0'
+              } shrink-0 h-full flex flex-col bg-[#09090B] border-r border-[#27272A] transition-all duration-200 overflow-hidden relative`}
+            >
+              {/* Sidebar Header & Search */}
+              <div className="p-2.5 border-b border-[#27272A] space-y-2 shrink-0">
+                <div className="flex items-center justify-between text-xs font-medium text-[#A1A1AA]">
+                  <span className="flex items-center gap-1.5 text-zinc-300">
+                    <Droplets className="w-3.5 h-3.5 text-[#10B981]" />
+                    <span>Incidents ({filteredIncidents.length})</span>
+                  </span>
+                  <button
+                    onClick={() => setIsSidebarOpen(false)}
+                    title="Collapse sidebar"
+                    className="text-[#71717A] hover:text-white p-0.5 rounded cursor-pointer text-xs"
+                  >
+                    ‹
+                  </button>
                 </div>
 
-                {/* Search Bar */}
+                {/* Minimal Search Input */}
                 <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <Search className="w-3 h-3 text-[#71717A] absolute left-2 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search by Ward, ID, landmark..."
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 outline-none focus:border-blue-500"
+                    placeholder="Search ward, id..."
+                    className="w-full h-7 bg-[#18181B] border border-[#27272A] rounded pl-6 pr-2 text-xs text-zinc-200 placeholder-[#71717A] outline-none focus:border-[#3F3F46]"
                   />
                 </div>
 
-                {/* Filter Pills */}
-                <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
-                  {['ALL', 'ACTIVE', 'AWAITING_APPROVAL', 'CRITICAL'].map((f) => (
+                {/* Filter Tabs */}
+                <div className="flex items-center gap-1 overflow-x-auto text-[11px]">
+                  {['ALL', 'ACTIVE', 'APPROVAL', 'CRITICAL'].map((f) => (
                     <button
                       key={f}
-                      onClick={() => setStatusFilter(f)}
-                      className={`px-2.5 py-1 rounded-md font-medium transition cursor-pointer ${
-                        statusFilter === f
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-slate-800 text-slate-400 hover:text-white'
+                      onClick={() => setStatusFilter(f === 'APPROVAL' ? 'AWAITING_APPROVAL' : f)}
+                      className={`h-5 px-1.5 rounded text-[10px] font-medium transition cursor-pointer ${
+                        (f === 'APPROVAL' && statusFilter === 'AWAITING_APPROVAL') || statusFilter === f
+                          ? 'bg-[#27272A] text-white'
+                          : 'text-[#71717A] hover:text-zinc-300'
                       }`}
                     >
-                      {f.replace('_', ' ')}
+                      {f}
                     </button>
                   ))}
                 </div>
-
-                {/* Incidents Scrollable List */}
-                <div className="space-y-2 max-h-[540px] overflow-y-auto pr-1">
-                  {filteredIncidents.length === 0 ? (
-                    <div className="p-6 text-center text-xs text-slate-500">
-                      No incidents match the active filters.
-                    </div>
-                  ) : (
-                    filteredIncidents.map((inc) => {
-                      const isSelected = selectedIncident?.id === inc.id;
-                      const sev = inc.risk_assessment?.severity || 'LOW';
-
-                      return (
-                        <div
-                          key={inc.id}
-                          onClick={() => setSelectedIncident(inc)}
-                          className={`p-3 rounded-xl border transition cursor-pointer flex flex-col gap-1.5 ${
-                            isSelected
-                              ? 'bg-blue-950/40 border-blue-500/80 shadow-md ring-1 ring-blue-500/50'
-                              : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="font-mono text-xs font-bold text-blue-400">{inc.id}</span>
-                            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-slate-800 border border-slate-700 text-slate-300">
-                              {inc.status}
-                            </span>
-                          </div>
-
-                          <div className="text-xs font-semibold text-white line-clamp-1">
-                            {inc.report.ward_name}
-                          </div>
-
-                          <p className="text-[11px] text-slate-400 line-clamp-2">
-                            {inc.report.description}
-                          </p>
-
-                          <div className="pt-1 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
-                            <span className="text-slate-400">
-                              Depth: <strong className="text-white">{inc.report.water_depth_cm || 0}cm</strong>
-                            </span>
-                            <span className="text-slate-400">
-                              Risk:{' '}
-                              <strong className={sev === 'CRITICAL' ? 'text-red-400' : 'text-amber-400'}>
-                                {inc.risk_assessment ? `${inc.risk_assessment.risk_score}/100` : 'Pending'}
-                              </strong>
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
               </div>
-            </div>
 
-            {/* Right Column: Ward Map + Incident Detail View (7 cols) */}
-            <div className="lg:col-span-7 space-y-6">
+              {/* Roster List */}
+              <div className="flex-1 overflow-y-auto divide-y divide-[#18181B]">
+                {filteredIncidents.length === 0 ? (
+                  <div className="p-4 text-center text-xs text-[#71717A]">No matching incidents</div>
+                ) : (
+                  filteredIncidents.map((inc) => {
+                    const isSelected = selectedIncident?.id === inc.id;
+                    const sev = inc.risk_assessment?.severity || 'LOW';
+
+                    return (
+                      <div
+                        key={inc.id}
+                        onClick={() => setSelectedIncident(inc)}
+                        className={`p-2.5 transition cursor-pointer text-xs ${
+                          isSelected
+                            ? 'bg-[#18181B] text-white border-l-2 border-[#10B981]'
+                            : 'text-[#A1A1AA] hover:bg-[#121214] hover:text-zinc-200 border-l-2 border-transparent'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-mono text-[11px] font-medium text-zinc-300 truncate max-w-[130px]">
+                            {inc.report.ward_name}
+                          </span>
+                          <span
+                            className={`text-[9px] px-1 py-0.2 rounded font-mono ${
+                              inc.status === 'AWAITING_APPROVAL'
+                                ? 'bg-amber-950/60 text-amber-400 border border-amber-800/60'
+                                : inc.status === 'VERIFIED' || inc.status === 'RESOLVED'
+                                ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/60'
+                                : sev === 'CRITICAL'
+                                ? 'bg-rose-950/60 text-rose-400 border border-rose-800/60'
+                                : 'bg-[#27272A] text-[#A1A1AA]'
+                            }`}
+                          >
+                            {inc.status === 'AWAITING_APPROVAL' ? 'APPROVAL' : inc.status}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-[#71717A] line-clamp-1 mb-1">
+                          {inc.report.description}
+                        </p>
+                        <div className="flex items-center justify-between text-[10px] text-[#71717A] font-mono">
+                          <span>{inc.report.water_depth_cm || 0}cm depth</span>
+                          <span
+                            className={
+                              sev === 'CRITICAL'
+                                ? 'text-rose-400'
+                                : sev === 'HIGH'
+                                ? 'text-amber-400'
+                                : 'text-zinc-400'
+                            }
+                          >
+                            {inc.risk_assessment ? `${inc.risk_assessment.risk_score} score` : '—'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </aside>
+
+            {/* Sidebar Reopen Tab if collapsed */}
+            {!isSidebarOpen && (
+              <button
+                onClick={() => setIsSidebarOpen(true)}
+                title="Expand incident roster"
+                className="w-6 h-full border-r border-[#27272A] flex items-center justify-center text-xs text-[#71717A] hover:text-white bg-[#09090B] hover:bg-[#18181B] transition cursor-pointer"
+              >
+                ›
+              </button>
+            )}
+
+            {/* Center Area: Clean Full-Width Terminal with Floating Details Drawer Toggle */}
+            <main className="flex-1 h-full overflow-hidden flex flex-col relative bg-[#09090B]">
+              {/* Optional Top Bar for Selected Incident Context & Details Drawer Button */}
+              {selectedIncident && (
+                <div className="h-9 px-4 border-b border-[#27272A] flex items-center justify-between bg-[#09090B] text-xs text-[#A1A1AA] shrink-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-zinc-400">Context:</span>
+                    <span className="font-medium text-white font-mono">{selectedIncident.id}</span>
+                    <span className="text-[#52525B]">·</span>
+                    <span className="text-zinc-300">{selectedIncident.report.ward_name}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setShowDetailDrawer(!showDetailDrawer)}
+                      className={`px-2.5 py-0.5 rounded text-xs transition cursor-pointer border ${
+                        showDetailDrawer
+                          ? 'bg-[#27272A] text-white border-[#3F3F46]'
+                          : 'text-[#A1A1AA] hover:text-white border-transparent hover:border-[#27272A]'
+                      }`}
+                    >
+                      {showDetailDrawer ? 'Hide Details' : 'View Details & Actions'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex-1 flex overflow-hidden">
+                {/* Clean Terminal Console */}
+                <div className="flex-1 h-full overflow-hidden">
+                  <AgentChatConsole
+                    selectedIncident={selectedIncident}
+                    onSendMessage={handleSendMessage}
+                    chatLog={chatLog}
+                    loadingChat={loadingChat}
+                  />
+                </div>
+
+                {/* Collapsible Right Inspector for Incident Operations & Verification */}
+                {showDetailDrawer && selectedIncident && (
+                  <aside className="w-[460px] xl:w-[500px] shrink-0 h-full border-l border-[#27272A] overflow-y-auto bg-[#09090B] animate-in slide-in-from-right duration-200">
+                    <div className="p-3 border-b border-[#27272A] flex items-center justify-between">
+                      <span className="text-xs font-medium text-zinc-300">Incident Details</span>
+                      <button
+                        onClick={() => setShowDetailDrawer(false)}
+                        className="text-xs text-[#71717A] hover:text-white p-1"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="p-2">
+                      <IncidentDetailView
+                        incident={selectedIncident}
+                        onAnalyze={handleAnalyze}
+                        onPrioritize={handlePrioritize}
+                        onRecommend={handleRecommend}
+                        onTriage={handleTriage}
+                        onRequestApproval={handleRequestApproval}
+                        onResolve={handleResolve}
+                        onVerify={handleVerify}
+                        onRedispatch={handleRedispatch}
+                        onOverrideVerify={handleOverrideVerify}
+                        onCancelIncident={handleCancelIncident}
+                        onUploadEvidence={handleUploadEvidence}
+                        loadingAction={loadingAction}
+                      />
+                    </div>
+                  </aside>
+                )}
+              </div>
+            </main>
+          </div>
+        )}
+
+        {/* VIEW 2: MAP MODE (Interactive GIS Radar + Generous Telemetry & Operations Panel) */}
+        {activeTab === 'map' && (
+          <div className="flex-1 flex overflow-hidden">
+            {/* GIS Grid Canvas */}
+            <div className="flex-1 h-full overflow-hidden relative">
               <IncidentMap
                 incidents={incidents}
                 selectedIncident={selectedIncident}
                 onSelectIncident={(inc) => setSelectedIncident(inc)}
               />
-
-              <IncidentDetailView
-                incident={selectedIncident}
-                onAnalyze={handleAnalyze}
-                onPrioritize={handlePrioritize}
-                onRecommend={handleRecommend}
-                onTriage={handleTriage}
-                onRequestApproval={handleRequestApproval}
-                onResolve={handleResolve}
-                onVerify={handleVerify}
-                loadingAction={loadingAction}
-              />
             </div>
+
+            {/* Generous Telemetry & Operations Sidebar */}
+            <aside className="w-[460px] xl:w-[500px] shrink-0 h-full border-l border-[#27272A] bg-[#09090B] flex flex-col overflow-hidden shadow-2xl">
+              <div className="p-3 border-b border-[#27272A] flex items-center justify-between text-xs font-medium text-zinc-300">
+                <span>Selected Culvert Telemetry & Ops</span>
+                {selectedIncident && (
+                  <span className="text-[10px] font-mono text-[#71717A]">{selectedIncident.id}</span>
+                )}
+              </div>
+              <div className="flex-1 overflow-y-auto p-2">
+                {selectedIncident ? (
+                  <IncidentDetailView
+                    incident={selectedIncident}
+                    onAnalyze={handleAnalyze}
+                    onPrioritize={handlePrioritize}
+                    onRecommend={handleRecommend}
+                    onTriage={handleTriage}
+                    onRequestApproval={handleRequestApproval}
+                    onResolve={handleResolve}
+                    onVerify={handleVerify}
+                    onRedispatch={handleRedispatch}
+                    onOverrideVerify={handleOverrideVerify}
+                    onCancelIncident={handleCancelIncident}
+                    onUploadEvidence={handleUploadEvidence}
+                    loadingAction={loadingAction}
+                  />
+                ) : (
+                  <div className="p-6 text-center text-xs text-[#71717A]">
+                    Click any marker on the map to inspect water levels and sensors.
+                  </div>
+                )}
+              </div>
+            </aside>
           </div>
         )}
-      </main>
+
+        {/* VIEW 3: SUPERVISOR QUEUE MODE */}
+        {activeTab === 'queue' && (
+          <div className="flex-1 h-full overflow-y-auto bg-[#09090B] p-6 max-w-4xl mx-auto">
+            <HumanApprovalQueue
+              pendingIncidents={pendingApprovalIncidents}
+              onReview={handleHumanReview}
+              onRedispatch={handleRedispatch}
+              onOverrideVerify={handleOverrideVerify}
+              loadingAction={loadingAction}
+            />
+          </div>
+        )}
+      </div>
 
       {/* Citizen Submission Modal */}
       <IncidentReportModal

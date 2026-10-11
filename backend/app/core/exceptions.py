@@ -26,3 +26,14 @@ class VerificationFailedError(IncidentError):
         super().__init__(f"Verification failed for incident '{incident_id}': {reason}")
         self.incident_id = incident_id
         self.reason = reason
+
+class SageMakerConfigurationError(IncidentError):
+    """Raised when real SageMaker inference is enabled but the endpoint is misconfigured."""
+    def __init__(self, message: str):
+        super().__init__(message)
+
+class SageMakerInvocationError(IncidentError):
+    """Raised when real SageMaker model endpoint invocation fails or times out."""
+    def __init__(self, endpoint_name: str, message: str):
+        super().__init__(f"SageMaker endpoint '{endpoint_name}' invocation failed: {message}")
+        self.endpoint_name = endpoint_name
