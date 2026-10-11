@@ -13,15 +13,15 @@ Parameters:
 
   DynamoDBTableName:
     Type: String
-    Default: ProjectTable
+    Default: monsoon-sentinel-incidents
 
   EvidenceBucketName:
     Type: String
-    Default: project-evidence-a7k29x
+    Default: monsoon-sentinel-evidence
 
   LambdaRoleName:
     Type: String
-    Default: lambdaRole
+    Default: monsoon-sentinel-execution-role
 
   SageMakerEndpointName:
     Type: String

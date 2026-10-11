@@ -13,7 +13,7 @@ from app.db.dynamodb_repository import DynamoDbIncidentRepository
 def dynamodb_env():
     with mock_aws():
         repo = DynamoDbIncidentRepository(
-            table_name="ProjectTable",
+            table_name="monsoon-sentinel-incidents",
             region_name="ap-south-1"
         )
         repo._ensure_table_exists()
@@ -22,7 +22,7 @@ def dynamodb_env():
 def test_dynamodb_key_schema_and_item_structure(dynamodb_env):
     repo = dynamodb_env
     # Verify table key schema has pk (HASH) and sk (RANGE)
-    table_desc = repo._table.meta.client.describe_table(TableName="ProjectTable")
+    table_desc = repo._table.meta.client.describe_table(TableName="monsoon-sentinel-incidents")
     key_schema = {k["AttributeName"]: k["KeyType"] for k in table_desc["Table"]["KeySchema"]}
     assert key_schema.get("pk") == "HASH"
     assert key_schema.get("sk") == "RANGE"
@@ -120,7 +120,7 @@ def test_dynamodb_persistence_across_restarts(dynamodb_env):
 
     # Simulate restart by creating repo2 pointing to same DynamoDB table
     repo2 = DynamoDbIncidentRepository(
-        table_name="ProjectTable",
+        table_name="monsoon-sentinel-incidents",
         region_name="ap-south-1"
     )
 

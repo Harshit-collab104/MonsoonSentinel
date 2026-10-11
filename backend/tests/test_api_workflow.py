@@ -212,7 +212,7 @@ def test_human_review_supervisor_actions(client):
     client.post(f"/api/v1/incidents/{inc_id}/tasks")
     client.post(f"/api/v1/incidents/{inc_id}/resolve", json={
         "resolution_notes": "Silt cleared by suction truck.",
-        "evidence_url": "s3://project-evidence-a7k29x/test.jpg"
+        "evidence_url": "s3://monsoon-sentinel-evidence/test.jpg"
     })
 
     # 2. Trigger failed verification -> transitions to NEEDS_HUMAN_REVIEW

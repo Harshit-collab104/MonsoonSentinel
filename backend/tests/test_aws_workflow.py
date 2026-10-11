@@ -11,13 +11,13 @@ from app.services.incident_service import IncidentService
 def aws_workflow_env():
     with mock_aws():
         dynamo_repo = DynamoDbIncidentRepository(
-            table_name="ProjectTable",
+            table_name="monsoon-sentinel-incidents",
             region_name="ap-south-1"
         )
         dynamo_repo._ensure_table_exists()
 
         s3_svc = S3StorageService(
-            bucket_name="project-evidence-a7k29x",
+            bucket_name="monsoon-sentinel-evidence",
             region_name="ap-south-1"
         )
         s3_svc._ensure_bucket_exists()

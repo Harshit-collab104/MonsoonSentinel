@@ -13,11 +13,11 @@ class Settings(BaseModel):
     DATABASE_PATH: str = os.getenv("DATABASE_PATH", "monsoon_sentinel.db")
 
     # AWS DynamoDB Configuration
-    DYNAMODB_TABLE_NAME: str = os.getenv("DYNAMODB_TABLE_NAME", "ProjectTable")
+    DYNAMODB_TABLE_NAME: str = os.getenv("DYNAMODB_TABLE_NAME", "monsoon-sentinel-incidents")
     DYNAMODB_ENDPOINT_URL: Optional[str] = os.getenv("DYNAMODB_ENDPOINT_URL", None)
 
     # AWS S3 Configuration
-    S3_BUCKET_NAME: str = os.getenv("S3_BUCKET_NAME", os.getenv("EVIDENCE_BUCKET", "project-evidence-a7k29x"))
+    S3_BUCKET_NAME: str = os.getenv("S3_BUCKET_NAME", os.getenv("EVIDENCE_BUCKET", "monsoon-sentinel-evidence"))
     S3_ENDPOINT_URL: Optional[str] = os.getenv("S3_ENDPOINT_URL", None)
 
     # AWS General Configuration

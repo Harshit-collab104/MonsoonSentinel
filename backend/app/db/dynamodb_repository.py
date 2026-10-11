@@ -46,7 +46,7 @@ class DynamoDbIncidentRepository(IncidentRepositoryBase):
 
     def _ensure_table_exists(self):
         """Helper to create table schema if running in local emulator or mock environment.
-        Compatible with existing ProjectTable schema: partition key 'pk', sort key 'sk'.
+        Compatible with DynamoDB schema: partition key 'pk', sort key 'sk'.
         """
         try:
             self._table.load()

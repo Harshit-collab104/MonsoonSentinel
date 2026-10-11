@@ -147,7 +147,7 @@ def seed_database(force: bool = False):
     service.record_resolution(
         inc3.id,
         resolution_notes="Field crew deployed suction rig and removed 12 cubic meters of silt.",
-        evidence_url="s3://project-evidence-a7k29x/resolutions/hindmata_clearance.jpg"
+        evidence_url="s3://monsoon-sentinel-evidence/resolutions/hindmata_clearance.jpg"
     )
     inc3 = service.verify_resolution(
         inc3.id,
